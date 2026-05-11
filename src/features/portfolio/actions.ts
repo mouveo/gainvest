@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 import { getDefaultAccountId } from "./queries";
+import { SUPPORTS, type Support } from "./types";
 
 const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
 
@@ -32,6 +33,14 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const tradeTime = String(formData.get("trade_time") ?? "") || null;
   const executionVenue = String(formData.get("execution_venue") ?? "").trim() || null;
   const broker = String(formData.get("broker") ?? "").trim() || null;
+
+  const supportRaw = String(formData.get("support") ?? "CTO");
+
+  if (!SUPPORTS.includes(supportRaw as Support)) {
+    return { ok: false, error: "Support invalide." };
+  }
+
+  const support = supportRaw as Support;
 
   if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
   if (!name) return { ok: false, error: "Le nom de l'instrument est requis." };
@@ -79,6 +88,7 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
     currency,
     execution_venue: executionVenue,
     broker,
+    support,
   });
 
   if (insertErr) return { ok: false, error: insertErr.message };

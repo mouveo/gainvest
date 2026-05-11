@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 
 import { aggregate, type OrderRow, type Position } from "./aggregate";
+import type { Support } from "./types";
 
 /**
  * Read the current user's transactions joined with their instrument metadata
@@ -24,6 +25,7 @@ export async function getOrders(): Promise<OrderRow[]> {
         fees,
         execution_venue,
         broker,
+        support,
         instrument:instruments (
           isin,
           name,
@@ -57,6 +59,7 @@ export async function getOrders(): Promise<OrderRow[]> {
         fees: Number(row.fees ?? 0),
         executionVenue: row.execution_venue,
         broker: row.broker,
+        support: row.support as Support,
       };
     });
 }
