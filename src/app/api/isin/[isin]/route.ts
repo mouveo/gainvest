@@ -50,6 +50,7 @@ export async function GET(
       currency: cached.currency,
       country: cached.country,
       ticker: null,
+      exchCode: null,
       source: "cache",
     };
     return NextResponse.json({ ok: true, data });

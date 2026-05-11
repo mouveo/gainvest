@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { lookupIsin } from "@/lib/openfigi";
 import { createClient } from "@/lib/supabase/server";
-import { fetchQuotes } from "@/lib/yahoo-finance";
+import { buildStooqSymbol, fetchStooqQuotes } from "@/lib/stooq";
 
 import { getDefaultAccountId } from "./queries";
 import { SUPPORTS, type Support } from "./types";
@@ -207,22 +207,29 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
       failed.push(inst.isin);
       continue;
     }
+    const stooqSymbol = buildStooqSymbol(ticker, meta?.exchCode ?? null);
+    if (!stooqSymbol) {
+      // OpenFIGI exchCode unmapped → Stooq cannot resolve; user can edit the
+      // price inline via EditablePrice or set instruments.yahoo_symbol manually.
+      failed.push(inst.isin);
+      continue;
+    }
     const { error: updErr } = await supabase
       .from("instruments")
-      .update({ yahoo_symbol: ticker })
+      .update({ yahoo_symbol: stooqSymbol })
       .eq("id", inst.id);
     if (updErr) {
       failed.push(inst.isin);
       continue;
     }
-    inst.yahoo_symbol = ticker;
+    inst.yahoo_symbol = stooqSymbol;
   }
 
   const symbols = stale
     .map((inst) => inst.yahoo_symbol)
     .filter((s): s is string => typeof s === "string" && s.length > 0);
 
-  const quotes = symbols.length > 0 ? await fetchQuotes(symbols) : [];
+  const quotes = symbols.length > 0 ? await fetchStooqQuotes(symbols) : [];
   const quoteBySymbol = new Map<string, (typeof quotes)[number]>();
   for (const q of quotes) quoteBySymbol.set(q.symbol, q);
 

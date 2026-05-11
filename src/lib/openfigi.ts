@@ -9,6 +9,7 @@ export type IsinLookup = {
   currency: string;
   country: string | null;
   ticker: string | null;
+  exchCode: string | null;
   source: "openfigi" | "cache";
 };
 
@@ -64,10 +65,7 @@ type OpenFigiRecord = {
   exchCode?: string;
 };
 
-type OpenFigiResponseItem =
-  | { data: OpenFigiRecord[] }
-  | { warning: string }
-  | { error: string };
+type OpenFigiResponseItem = { data: OpenFigiRecord[] } | { warning: string } | { error: string };
 
 export async function lookupIsin(isin: string): Promise<IsinLookup | null> {
   if (!isValidIsin(isin)) return null;
@@ -112,6 +110,7 @@ export async function lookupIsin(isin: string): Promise<IsinLookup | null> {
 
   const country = isin.slice(0, 2);
   const ticker = record.ticker ?? null;
+  const exchCode = record.exchCode ?? null;
 
   return {
     isin,
@@ -120,6 +119,7 @@ export async function lookupIsin(isin: string): Promise<IsinLookup | null> {
     currency,
     country,
     ticker,
+    exchCode,
     source: "openfigi",
   };
 }
