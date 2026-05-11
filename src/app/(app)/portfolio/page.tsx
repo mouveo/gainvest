@@ -12,8 +12,15 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function PortfolioPage() {
-  const { orders, positions } = await getPositions();
+  const { orders, positions, pricesUpdatedAt } = await getPositions();
   const totals = computeTotals(positions);
 
-  return <PortfolioShell positions={positions} orders={orders} totals={totals} />;
+  return (
+    <PortfolioShell
+      positions={positions}
+      orders={orders}
+      totals={totals}
+      pricesUpdatedAt={pricesUpdatedAt}
+    />
+  );
 }
