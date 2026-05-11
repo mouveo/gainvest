@@ -16,6 +16,9 @@ import { cn } from "@/lib/utils";
 
 import type { Position } from "../aggregate";
 import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
+import { ColumnsPicker } from "./columns/columns-picker";
+import type { ColumnDef } from "./columns/types";
+import { useVisibleColumns } from "./columns/use-visible-columns";
 import { DeltaPill } from "./delta-pill";
 import { EditablePrice } from "./editable-price";
 import { MoneyCell } from "./money-cell";
@@ -43,12 +46,48 @@ const NUMERIC: SortKey[] = [
   "pnlAnnualized",
 ];
 
+type PositionColKey =
+  | "instrument"
+  | "support"
+  | "type"
+  | "qty"
+  | "pru"
+  | "currentPrice"
+  | "invested"
+  | "valuation"
+  | "pnl"
+  | "pnlPct"
+  | "pnlAnnualized"
+  | "held";
+
+const POSITION_COLUMNS: readonly ColumnDef<PositionColKey>[] = [
+  { key: "instrument", label: "Instrument", always: true },
+  { key: "support", label: "Support", defaultVisible: true },
+  { key: "type", label: "Type", defaultVisible: true },
+  { key: "qty", label: "Quantité", num: true, defaultVisible: true },
+  { key: "pru", label: "PRU", num: true, defaultVisible: true },
+  { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
+  { key: "invested", label: "Investi", num: true, defaultVisible: true },
+  { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
+  { key: "pnl", label: "PnL", num: true, defaultVisible: true },
+  { key: "pnlPct", label: "PnL %", num: true, defaultVisible: true },
+  { key: "pnlAnnualized", label: "PnL / an", num: true, defaultVisible: true },
+  { key: "held", label: "Détention", num: true, defaultVisible: true },
+];
+
 export function PositionsTable({ positions }: { positions: Position[] }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
     key: "valuation",
     dir: "desc",
   });
   const [openPositions, setOpenPositions] = useState<Record<string, boolean>>({});
+
+  const { shown, toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
+    "gainvest:positions:visible-columns",
+    POSITION_COLUMNS,
+  );
+
+  const tableColSpan = visibleCount + 1;
 
   const sorted = useMemo(() => {
     return positions.slice().sort((a, b) => {
@@ -71,57 +110,87 @@ export function PositionsTable({ positions }: { positions: Position[] }) {
   }
 
   return (
-    <div className="border-border overflow-x-auto rounded-lg border">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/40 hover:bg-muted/40">
-            <TableHead className="w-10" />
-            <SortHead k="instrumentName" sort={sort} onSort={toggleSort}>
-              Instrument
-            </SortHead>
-            <TableHead>Support</TableHead>
-            <TableHead>Type</TableHead>
-            <SortHead k="qty" sort={sort} onSort={toggleSort} num>
-              Quantité
-            </SortHead>
-            <SortHead k="pru" sort={sort} onSort={toggleSort} num>
-              PRU
-            </SortHead>
-            <SortHead k="currentPrice" sort={sort} onSort={toggleSort} num>
-              Cours actuel
-            </SortHead>
-            <SortHead k="invested" sort={sort} onSort={toggleSort} num>
-              Investi
-            </SortHead>
-            <SortHead k="valuation" sort={sort} onSort={toggleSort} num>
-              Valorisation
-            </SortHead>
-            <SortHead k="pnl" sort={sort} onSort={toggleSort} num>
-              PnL
-            </SortHead>
-            <SortHead k="pnlPct" sort={sort} onSort={toggleSort} num>
-              PnL %
-            </SortHead>
-            <SortHead k="pnlAnnualized" sort={sort} onSort={toggleSort} num>
-              PnL / an
-            </SortHead>
-            <TableHead className="text-right">Détention</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sorted.map((p) => {
-            const isOpen = !!openPositions[p.key];
-            return (
-              <PositionRow
-                key={p.key}
-                p={p}
-                isOpen={isOpen}
-                onToggle={() => setOpenPositions((o) => ({ ...o, [p.key]: !o[p.key] }))}
-              />
-            );
-          })}
-        </TableBody>
-      </Table>
+    <div className="flex flex-col gap-3">
+      <div className="flex justify-end">
+        <ColumnsPicker
+          columns={POSITION_COLUMNS}
+          visible={visible}
+          visibleCount={visibleCount}
+          onToggle={toggle}
+          onReset={reset}
+          onShowAll={showAll}
+        />
+      </div>
+      <div className="border-border overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead className="w-10" />
+              <SortHead k="instrumentName" sort={sort} onSort={toggleSort}>
+                Instrument
+              </SortHead>
+              {shown("support") ? <TableHead>Support</TableHead> : null}
+              {shown("type") ? <TableHead>Type</TableHead> : null}
+              {shown("qty") ? (
+                <SortHead k="qty" sort={sort} onSort={toggleSort} num>
+                  Quantité
+                </SortHead>
+              ) : null}
+              {shown("pru") ? (
+                <SortHead k="pru" sort={sort} onSort={toggleSort} num>
+                  PRU
+                </SortHead>
+              ) : null}
+              {shown("currentPrice") ? (
+                <SortHead k="currentPrice" sort={sort} onSort={toggleSort} num>
+                  Cours actuel
+                </SortHead>
+              ) : null}
+              {shown("invested") ? (
+                <SortHead k="invested" sort={sort} onSort={toggleSort} num>
+                  Investi
+                </SortHead>
+              ) : null}
+              {shown("valuation") ? (
+                <SortHead k="valuation" sort={sort} onSort={toggleSort} num>
+                  Valorisation
+                </SortHead>
+              ) : null}
+              {shown("pnl") ? (
+                <SortHead k="pnl" sort={sort} onSort={toggleSort} num>
+                  PnL
+                </SortHead>
+              ) : null}
+              {shown("pnlPct") ? (
+                <SortHead k="pnlPct" sort={sort} onSort={toggleSort} num>
+                  PnL %
+                </SortHead>
+              ) : null}
+              {shown("pnlAnnualized") ? (
+                <SortHead k="pnlAnnualized" sort={sort} onSort={toggleSort} num>
+                  PnL / an
+                </SortHead>
+              ) : null}
+              {shown("held") ? <TableHead className="text-right">Détention</TableHead> : null}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((p) => {
+              const isOpen = !!openPositions[p.key];
+              return (
+                <PositionRow
+                  key={p.key}
+                  p={p}
+                  isOpen={isOpen}
+                  onToggle={() => setOpenPositions((o) => ({ ...o, [p.key]: !o[p.key] }))}
+                  shown={shown}
+                  tableColSpan={tableColSpan}
+                />
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 
@@ -158,10 +227,14 @@ function PositionRow({
   p,
   isOpen,
   onToggle,
+  shown,
+  tableColSpan,
 }: {
   p: Position;
   isOpen: boolean;
   onToggle: () => void;
+  shown: (k: PositionColKey) => boolean;
+  tableColSpan: number;
 }) {
   void NUMERIC; // referenced for SortKey union — keeps the runtime constant alive for future filters.
   return (
@@ -185,50 +258,74 @@ function PositionRow({
             </span>
           </div>
         </TableCell>
-        <TableCell>
-          <SupportTag support={p.support} />
-        </TableCell>
-        <TableCell>
-          <Badge variant="outline" className="uppercase">
-            {p.assetClass}
-          </Badge>
-        </TableCell>
-        <TableCell className="text-right font-mono tabular-nums">{fmtInt(p.qty)}</TableCell>
-        <TableCell className="text-right font-mono tabular-nums">
-          {fmtNum(p.pru, p.pru < 50 ? 3 : 2)} €
-        </TableCell>
-        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-          <EditablePrice isin={p.isin} value={p.currentPrice} />
-        </TableCell>
-        <TableCell className="text-right font-mono tabular-nums">{fmtCcy(p.invested, 0)}</TableCell>
-        <TableCell className="text-right font-mono font-medium tabular-nums">
-          {fmtCcy(p.valuation, 0)}
-        </TableCell>
-        <TableCell className="text-right">
-          <MoneyCell value={p.pnl} signed />
-        </TableCell>
-        <TableCell className="text-right">
-          <DeltaPill value={p.pnlPct} />
-        </TableCell>
-        <TableCell className="text-right">
-          <DeltaPill value={p.pnlAnnualized} />
-        </TableCell>
-        <TableCell className="text-right">
-          <div className="flex flex-col items-end">
-            <span className="font-mono">{p.yearsHeld.toFixed(1)} a</span>
-            <span className="text-muted-foreground text-xs">depuis {fmtDateFR(p.meanDate)}</span>
-          </div>
-        </TableCell>
+        {shown("support") ? (
+          <TableCell>
+            <SupportTag support={p.support} />
+          </TableCell>
+        ) : null}
+        {shown("type") ? (
+          <TableCell>
+            <Badge variant="outline" className="uppercase">
+              {p.assetClass}
+            </Badge>
+          </TableCell>
+        ) : null}
+        {shown("qty") ? (
+          <TableCell className="text-right font-mono tabular-nums">{fmtInt(p.qty)}</TableCell>
+        ) : null}
+        {shown("pru") ? (
+          <TableCell className="text-right font-mono tabular-nums">
+            {fmtNum(p.pru, p.pru < 50 ? 3 : 2)} €
+          </TableCell>
+        ) : null}
+        {shown("currentPrice") ? (
+          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+            <EditablePrice isin={p.isin} value={p.currentPrice} />
+          </TableCell>
+        ) : null}
+        {shown("invested") ? (
+          <TableCell className="text-right font-mono tabular-nums">
+            {fmtCcy(p.invested, 0)}
+          </TableCell>
+        ) : null}
+        {shown("valuation") ? (
+          <TableCell className="text-right font-mono font-medium tabular-nums">
+            {fmtCcy(p.valuation, 0)}
+          </TableCell>
+        ) : null}
+        {shown("pnl") ? (
+          <TableCell className="text-right">
+            <MoneyCell value={p.pnl} signed />
+          </TableCell>
+        ) : null}
+        {shown("pnlPct") ? (
+          <TableCell className="text-right">
+            <DeltaPill value={p.pnlPct} />
+          </TableCell>
+        ) : null}
+        {shown("pnlAnnualized") ? (
+          <TableCell className="text-right">
+            <DeltaPill value={p.pnlAnnualized} />
+          </TableCell>
+        ) : null}
+        {shown("held") ? (
+          <TableCell className="text-right">
+            <div className="flex flex-col items-end">
+              <span className="font-mono">{p.yearsHeld.toFixed(1)} a</span>
+              <span className="text-muted-foreground text-xs">depuis {fmtDateFR(p.meanDate)}</span>
+            </div>
+          </TableCell>
+        ) : null}
       </TableRow>
-      {isOpen ? <OrdersSubrow position={p} /> : null}
+      {isOpen ? <OrdersSubrow position={p} colSpan={tableColSpan} /> : null}
     </>
   );
 }
 
-function OrdersSubrow({ position }: { position: Position }) {
+function OrdersSubrow({ position, colSpan }: { position: Position; colSpan: number }) {
   return (
     <TableRow className="bg-muted/20 hover:bg-muted/20">
-      <TableCell colSpan={13} className="px-4 py-3">
+      <TableCell colSpan={colSpan} className="px-4 py-3">
         <div className="text-muted-foreground mb-2 text-xs">
           Ordres contributeurs · {position.ordersCount} ({position.buyCount} achat
           {position.buyCount > 1 ? "s" : ""}
