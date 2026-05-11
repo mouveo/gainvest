@@ -9,7 +9,10 @@ import { getDefaultAccountId } from "./queries";
 import { SUPPORTS, type Support } from "./types";
 
 const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
-const PRICE_TTL_MS = 5 * 60 * 1000;
+// Auto-refresh runs once per day at most. EODHD free tier is capped at 20 API
+// calls per day; bouton "Rafraîchir" (force=true) bypasses the TTL when the
+// user wants a fresh quote on demand.
+const PRICE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type AddOrderResult = { ok: true } | { ok: false; error: string };
 
@@ -136,7 +139,7 @@ type RefreshableInstrument = {
   current_price_updated_at: string | null;
 };
 
-const FX_TTL_MS = 60 * 60 * 1000; // 1 h — FX moves slowly, keep API requests low
+const FX_TTL_MS = 24 * 60 * 60 * 1000; // 24 h — FX moves slowly enough; daily refresh suffices
 
 export async function refreshPrices(options?: { force?: boolean }): Promise<{
   refreshed: number;
