@@ -31,10 +31,41 @@ export type EodhdQuote = {
   fetchedAt: string; // ISO
 };
 
+// Exchanges we prefer for non-US instruments, in priority order. Picks an EUR
+// venue when one exists — EODHD often returns LSE first for European ETFs
+// (priced in GBX, useless for an EUR-only dashboard).
+const NON_US_EXCHANGE_PRIORITY = [
+  "XETRA", // Deutsche Börse — typically the deepest book for UCITS ETFs
+  "F",     // Frankfurt floor
+  "AS",    // Euronext Amsterdam — primary for many iShares IE
+  "PA",    // Euronext Paris
+  "MI",    // Borsa Italiana
+  "BR",    // Euronext Bruxelles
+  "LS",    // Euronext Lisbon
+  "MC",    // Madrid
+  "SW",    // SIX Swiss
+];
+
+function rankHit(hit: { Exchange?: string; Currency?: string }, isUsIsin: boolean): number {
+  const ex = (hit.Exchange ?? "").toUpperCase();
+  const ccy = (hit.Currency ?? "").toUpperCase();
+  if (isUsIsin) {
+    // US ISIN: always prefer the US listing in USD; treat anything else as last
+    return ex === "US" ? 0 : 100;
+  }
+  // Non-US: prefer EUR > GBP > USD > GBX, then by exchange priority
+  const exRank = NON_US_EXCHANGE_PRIORITY.indexOf(ex);
+  const exScore = exRank === -1 ? 50 : exRank;
+  const ccyScore = ccy === "EUR" ? 0 : ccy === "GBP" ? 30 : ccy === "USD" ? 40 : ccy === "GBX" ? 60 : 70;
+  return ccyScore + exScore;
+}
+
 /**
- * Resolve an ISIN to the primary EODHD listing. EODHD's free tier `search`
- * endpoint returns every venue that lists the security; we keep the row
- * marked `isPrimary: true` (or fall back to the first row if none).
+ * Resolve an ISIN to the EODHD listing best suited for an EUR-centric
+ * portfolio. We rank candidates by currency first (EUR > GBP > USD > GBX) and
+ * then by exchange depth (Xetra > Frankfurt > Amsterdam > Paris > ...).
+ * EODHD's `isPrimary` flag is unreliable for European ETFs (frequently points
+ * at LSE in GBX), so we ignore it in favour of the ranking.
  *
  * Counts as 1 API request.
  */
@@ -58,17 +89,22 @@ export async function searchByIsin(isin: string): Promise<EodhdSearchHit | null>
     isPrimary?: boolean;
   }>;
   if (!Array.isArray(hits) || hits.length === 0) return null;
-  const primary = hits.find((h) => h.isPrimary === true) ?? hits[0]!;
-  if (!primary.Code || !primary.Exchange) return null;
+
+  const isUsIsin = isin.startsWith("US");
+  const best = hits
+    .filter((h) => h.Code && h.Exchange)
+    .sort((a, b) => rankHit(a, isUsIsin) - rankHit(b, isUsIsin))[0];
+  if (!best || !best.Code || !best.Exchange) return null;
+
   return {
-    code: primary.Code,
-    exchange: primary.Exchange,
-    name: primary.Name ?? "",
-    type: primary.Type ?? "",
-    country: primary.Country ?? "",
-    currency: primary.Currency ?? "EUR",
-    isin: primary.ISIN ?? isin,
-    isPrimary: primary.isPrimary === true,
+    code: best.Code,
+    exchange: best.Exchange,
+    name: best.Name ?? "",
+    type: best.Type ?? "",
+    country: best.Country ?? "",
+    currency: best.Currency ?? "EUR",
+    isin: best.ISIN ?? isin,
+    isPrimary: best.isPrimary === true,
   };
 }
 
