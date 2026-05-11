@@ -161,10 +161,7 @@ export function ImportSheet() {
         <FileUp className="size-4" />
         Importer un CSV
       </SheetTrigger>
-      <SheetContent
-        side="right"
-        className="w-full overflow-y-auto sm:max-w-3xl md:max-w-3xl"
-      >
+      <SheetContent side="right" className="!w-[min(80vw,1400px)] !max-w-none overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Importer un CSV de courtier</SheetTitle>
           <SheetDescription>
@@ -234,7 +231,9 @@ export function ImportSheet() {
                   {rows.length > 1 ? "s" : ""}
                 </span>
                 <span>·</span>
-                <span>{importable.length} importable{importable.length > 1 ? "s" : ""}</span>
+                <span>
+                  {importable.length} importable{importable.length > 1 ? "s" : ""}
+                </span>
                 {incomplete.length > 0 ? (
                   <>
                     <span>·</span>
@@ -268,16 +267,16 @@ export function ImportSheet() {
                             "bg-amber-50 hover:bg-amber-50 dark:bg-amber-950/30 dark:hover:bg-amber-950/30",
                         )}
                       >
-                        <TableCell className="whitespace-nowrap text-xs">
-                          {r.date || "—"}
-                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">{r.date || "—"}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={KIND_CLASS[r.kind]}>
                             {KIND_LABEL[r.kind]}
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-mono text-xs">{r.isin ?? "—"}</TableCell>
-                        <TableCell className="max-w-[18rem] truncate text-xs" title={r.description}>
+                        <TableCell className="font-mono text-xs whitespace-nowrap">
+                          {r.isin ?? "—"}
+                        </TableCell>
+                        <TableCell className="max-w-[24rem] truncate text-xs" title={r.description}>
                           {r.description || "—"}
                           {r.needsAttention && r.attentionReason ? (
                             <div className="text-warning mt-0.5 text-[10px]">
@@ -285,12 +284,12 @@ export function ImportSheet() {
                             </div>
                           ) : null}
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
+                        <TableCell className="text-right font-mono whitespace-nowrap tabular-nums">
                           {r.needsAttention && (r.kind === "buy" || r.kind === "sell") ? (
                             <Input
                               inputMode="decimal"
                               placeholder="Qté"
-                              className="h-7 w-20 text-right text-xs"
+                              className="h-7 w-24 text-right text-xs"
                               defaultValue=""
                               onBlur={(e) => updateQuantity(r.rawLine, e.target.value)}
                             />
@@ -300,11 +299,11 @@ export function ImportSheet() {
                             "—"
                           )}
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
+                        <TableCell className="text-right font-mono whitespace-nowrap tabular-nums">
                           {fmtCcy(r.totalAmount, 2)}
                         </TableCell>
                         <TableCell
-                          className="text-right font-mono tabular-nums text-xs"
+                          className="text-right font-mono text-xs whitespace-nowrap tabular-nums"
                           title={r.computedFees?.rationale ?? ""}
                         >
                           {r.computedFees ? fmtCcy(r.computedFees.total, 2) : "—"}
@@ -360,11 +359,7 @@ export function ImportSheet() {
 
         <SheetFooter>
           <SheetClose render={<Button type="button" variant="ghost" />}>Fermer</SheetClose>
-          <Button
-            type="button"
-            disabled={pending || importable.length === 0}
-            onClick={submit}
-          >
+          <Button type="button" disabled={pending || importable.length === 0} onClick={submit}>
             <Upload className="size-4" />
             {pending
               ? "Import en cours…"
