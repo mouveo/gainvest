@@ -44,3 +44,6 @@ next-env.d.ts
 .forge/
 .claude/hooks/
 .claude/session-state/
+
+*storybook.log
+storybook-static
