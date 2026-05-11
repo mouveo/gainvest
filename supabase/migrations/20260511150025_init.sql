@@ -1,5 +1,5 @@
 -- Gainvest — initial schema
--- Run this on the Supabase project via SQL Editor or the supabase CLI.
+-- Applied automatically by `supabase start` (local) and `supabase db push` (cloud).
 -- All tables that hold user data have a `user_id` column and Row Level Security
 -- enabled so each authenticated user only sees their own rows.
 

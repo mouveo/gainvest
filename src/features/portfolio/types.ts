@@ -1,78 +1,30 @@
-// Domain types for the portfolio feature.
-// These mirror the public schema in db/schema.sql and will be regenerated
-// from Supabase via `supabase gen types typescript` once the project is up.
+// Domain types derived from the Supabase-generated schema.
+// Regenerate with `pnpm db:types` after editing supabase/migrations/*.sql.
 
-export type AccountType =
-  | "pea"
-  | "pea_pme"
-  | "cto"
-  | "av"
-  | "per"
-  | "livret"
-  | "crypto"
-  | "real_estate"
-  | "other";
+import type { Database } from "@/lib/supabase/types";
 
-export type AssetClass = "equity" | "etf" | "fund" | "bond" | "crypto" | "real_estate" | "cash";
+type Tables = Database["public"]["Tables"];
+type Enums = Database["public"]["Enums"];
 
-export type TransactionKind =
-  | "buy"
-  | "sell"
-  | "dividend"
-  | "interest"
-  | "fee"
-  | "tax"
-  | "deposit"
-  | "withdrawal";
+export type Account = Tables["accounts"]["Row"];
+export type AccountInsert = Tables["accounts"]["Insert"];
+export type AccountUpdate = Tables["accounts"]["Update"];
 
-export interface Account {
-  id: string;
-  user_id: string;
-  name: string;
-  type: AccountType;
-  broker: string | null;
-  currency: string;
-  opened_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type Instrument = Tables["instruments"]["Row"];
+export type InstrumentInsert = Tables["instruments"]["Insert"];
+export type InstrumentUpdate = Tables["instruments"]["Update"];
 
-export interface Instrument {
-  id: string;
-  symbol: string;
-  isin: string | null;
-  mic: string | null;
-  name: string;
-  asset_class: AssetClass;
-  currency: string;
-  country: string | null;
-  created_at: string;
-}
+export type Transaction = Tables["transactions"]["Row"];
+export type TransactionInsert = Tables["transactions"]["Insert"];
+export type TransactionUpdate = Tables["transactions"]["Update"];
 
-export interface Transaction {
-  id: string;
-  user_id: string;
-  account_id: string;
-  instrument_id: string | null;
-  kind: TransactionKind;
-  trade_date: string;
-  settlement_date: string | null;
-  quantity: number | null;
-  price: number | null;
-  gross_amount: number;
-  fees: number;
-  tax: number;
-  currency: string;
-  fx_rate: number | null;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type Price = Tables["prices"]["Row"];
+export type PriceInsert = Tables["prices"]["Insert"];
 
-export interface Price {
-  instrument_id: string;
-  date: string;
-  close: number;
-  currency: string;
-  source: string | null;
-}
+// Enum literals — kept here so the rest of the app doesn't have to dig into
+// Database["public"]["Tables"]["accounts"]["Row"]["type"] every time.
+export type AccountType = NonNullable<Account["type"]>;
+export type AssetClass = NonNullable<Instrument["asset_class"]>;
+export type TransactionKind = NonNullable<Transaction["kind"]>;
+
+export type { Enums };

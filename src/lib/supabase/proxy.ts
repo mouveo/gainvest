@@ -3,11 +3,13 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getEnv } from "@/lib/env";
 
+import type { Database } from "./types";
+
 export async function refreshSession(request: NextRequest) {
   const env = getEnv();
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
+  const supabase = createServerClient<Database>(
     env.NEXT_PUBLIC_SUPABASE_URL,
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
