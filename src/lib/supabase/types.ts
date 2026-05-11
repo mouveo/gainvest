@@ -70,6 +70,8 @@ export type Database = {
           country: string | null;
           created_at: string;
           currency: string;
+          current_price: number | null;
+          current_price_updated_at: string | null;
           id: string;
           isin: string | null;
           mic: string | null;
@@ -81,6 +83,8 @@ export type Database = {
           country?: string | null;
           created_at?: string;
           currency?: string;
+          current_price?: number | null;
+          current_price_updated_at?: string | null;
           id?: string;
           isin?: string | null;
           mic?: string | null;
@@ -92,6 +96,8 @@ export type Database = {
           country?: string | null;
           created_at?: string;
           currency?: string;
+          current_price?: number | null;
+          current_price_updated_at?: string | null;
           id?: string;
           isin?: string | null;
           mic?: string | null;
@@ -135,8 +141,10 @@ export type Database = {
       transactions: {
         Row: {
           account_id: string;
+          broker: string | null;
           created_at: string;
           currency: string;
+          execution_venue: string | null;
           fees: number;
           fx_rate: number | null;
           gross_amount: number;
@@ -149,13 +157,16 @@ export type Database = {
           settlement_date: string | null;
           tax: number;
           trade_date: string;
+          trade_time: string | null;
           updated_at: string;
           user_id: string;
         };
         Insert: {
           account_id: string;
+          broker?: string | null;
           created_at?: string;
           currency?: string;
+          execution_venue?: string | null;
           fees?: number;
           fx_rate?: number | null;
           gross_amount: number;
@@ -168,13 +179,16 @@ export type Database = {
           settlement_date?: string | null;
           tax?: number;
           trade_date: string;
+          trade_time?: string | null;
           updated_at?: string;
           user_id: string;
         };
         Update: {
           account_id?: string;
+          broker?: string | null;
           created_at?: string;
           currency?: string;
+          execution_venue?: string | null;
           fees?: number;
           fx_rate?: number | null;
           gross_amount?: number;
@@ -187,6 +201,7 @@ export type Database = {
           settlement_date?: string | null;
           tax?: number;
           trade_date?: string;
+          trade_time?: string | null;
           updated_at?: string;
           user_id?: string;
         };
