@@ -91,33 +91,58 @@ export async function getOrders(): Promise<OrderRow[]> {
 }
 
 /**
- * Map of `isin -> current_price` for all instruments referenced by the user.
- * Falls back to the average buy price when no quote has been set yet, so a
- * brand-new position doesn't show 0 €.
+ * Map of `isin -> current_price` for all instruments referenced by the user,
+ * converted to EUR using the cached `fx_rates` table. The aggregate layer
+ * compares against PRU (already in EUR because the broker CSV is in EUR), so
+ * this avoids mixed-currency arithmetic on PnL/valuation.
+ *
+ * Falls back to the average buy price when no quote has been set yet — the
+ * fallback is already in EUR because `transactions.price` is derived from the
+ * EUR `gross_amount`.
  */
 export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<string, number>> {
   const supabase = await createClient();
-  const tradable = orders.filter(
-    (o) => (o.kind === "buy" || o.kind === "sell") && o.isin !== "",
-  );
+  const tradable = orders.filter((o) => (o.kind === "buy" || o.kind === "sell") && o.isin !== "");
   const isins = Array.from(new Set(tradable.map((o) => o.isin)));
   if (isins.length === 0) return {};
 
   const { data, error } = await supabase
     .from("instruments")
-    .select("isin, current_price")
+    .select("isin, current_price, currency")
     .in("isin", isins);
 
   if (error) throw error;
 
-  const map: Record<string, number> = {};
+  // Pull every FX rate we might need (skip EUR, rate is 1).
+  const currencies = new Set<string>();
   for (const row of data ?? []) {
-    if (row.isin && row.current_price != null) {
-      map[row.isin] = Number(row.current_price);
+    const ccy = (row.currency ?? "EUR").toUpperCase();
+    if (ccy !== "EUR") currencies.add(ccy);
+  }
+  const fxByCcy: Record<string, number> = { EUR: 1 };
+  if (currencies.size > 0) {
+    const { data: fxRows, error: fxErr } = await supabase
+      .from("fx_rates")
+      .select("currency, eur_rate")
+      .in("currency", Array.from(currencies));
+    if (fxErr) throw fxErr;
+    for (const r of fxRows ?? []) {
+      if (r.currency && r.eur_rate != null) {
+        fxByCcy[r.currency.toUpperCase()] = Number(r.eur_rate);
+      }
     }
   }
 
+  const map: Record<string, number> = {};
+  for (const row of data ?? []) {
+    if (!row.isin || row.current_price == null) continue;
+    const ccy = (row.currency ?? "EUR").toUpperCase();
+    const rate = fxByCcy[ccy] ?? 1; // unknown currency → no conversion (best effort)
+    map[row.isin] = Number(row.current_price) * rate;
+  }
+
   // Fallback: use the most recent buy price for instruments without a quote.
+  // `tradable[i].price` is already EUR (computed from gross_amount in EUR / quantity).
   for (const isin of isins) {
     if (map[isin] != null) continue;
     const fallback = tradable.find((o) => o.isin === isin && o.kind === "buy");

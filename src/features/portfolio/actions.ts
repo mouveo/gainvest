@@ -2,9 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { lookupIsin } from "@/lib/openfigi";
+import { fetchFxToEur, fetchRealTimeQuote, searchByIsin } from "@/lib/eodhd";
 import { createClient } from "@/lib/supabase/server";
-import { buildStooqSymbol, fetchStooqQuotes } from "@/lib/stooq";
 
 import { getDefaultAccountId } from "./queries";
 import { SUPPORTS, type Support } from "./types";
@@ -133,8 +132,11 @@ type RefreshableInstrument = {
   isin: string | null;
   name: string;
   yahoo_symbol: string | null;
+  currency: string;
   current_price_updated_at: string | null;
 };
+
+const FX_TTL_MS = 60 * 60 * 1000; // 1 h — FX moves slowly, keep API requests low
 
 export async function refreshPrices(options?: { force?: boolean }): Promise<{
   refreshed: number;
@@ -156,6 +158,7 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
           id,
           isin,
           name,
+          currency,
           yahoo_symbol,
           current_price_updated_at
         )
@@ -174,6 +177,7 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
       id: inst.id,
       isin: inst.isin ?? null,
       name: inst.name,
+      currency: inst.currency ?? "EUR",
       yahoo_symbol: inst.yahoo_symbol ?? null,
       current_price_updated_at: inst.current_price_updated_at ?? null,
     });
@@ -195,49 +199,38 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
     stale.push(inst);
   }
 
+  // Step 1 — resolve any instrument that does not have an EODHD symbol yet
+  // (yahoo_symbol stores "CODE.EXCHANGE" e.g. "AAPL.US", "IS3N.XETRA").
   for (const inst of stale) {
     if (inst.yahoo_symbol) continue;
     if (!inst.isin) {
       failed.push(inst.name);
       continue;
     }
-    const meta = await lookupIsin(inst.isin);
-    const ticker = meta?.ticker?.trim();
-    if (!ticker) {
+    const hit = await searchByIsin(inst.isin);
+    if (!hit) {
       failed.push(inst.isin);
       continue;
     }
-    const stooqSymbol = buildStooqSymbol(ticker, meta?.exchCode ?? null);
-    if (!stooqSymbol) {
-      // OpenFIGI exchCode unmapped → Stooq cannot resolve; user can edit the
-      // price inline via EditablePrice or set instruments.yahoo_symbol manually.
-      failed.push(inst.isin);
-      continue;
-    }
+    const symbol = `${hit.code}.${hit.exchange}`;
     const { error: updErr } = await supabase
       .from("instruments")
-      .update({ yahoo_symbol: stooqSymbol })
+      .update({ yahoo_symbol: symbol, currency: hit.currency || inst.currency })
       .eq("id", inst.id);
     if (updErr) {
       failed.push(inst.isin);
       continue;
     }
-    inst.yahoo_symbol = stooqSymbol;
+    inst.yahoo_symbol = symbol;
+    inst.currency = hit.currency || inst.currency;
   }
 
-  const symbols = stale
-    .map((inst) => inst.yahoo_symbol)
-    .filter((s): s is string => typeof s === "string" && s.length > 0);
-
-  const quotes = symbols.length > 0 ? await fetchStooqQuotes(symbols) : [];
-  const quoteBySymbol = new Map<string, (typeof quotes)[number]>();
-  for (const q of quotes) quoteBySymbol.set(q.symbol, q);
-
+  // Step 2 — fetch real-time quote per symbol (EODHD does not batch on free tier).
   let refreshed = 0;
   const updatedAt = new Date().toISOString();
   for (const inst of stale) {
     if (!inst.yahoo_symbol) continue;
-    const quote = quoteBySymbol.get(inst.yahoo_symbol);
+    const quote = await fetchRealTimeQuote(inst.yahoo_symbol);
     if (!quote) {
       failed.push(inst.isin ?? inst.name);
       continue;
@@ -245,7 +238,7 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
     const { error: updErr } = await supabase
       .from("instruments")
       .update({
-        current_price: quote.price,
+        current_price: quote.close,
         current_price_updated_at: updatedAt,
       })
       .eq("id", inst.id);
@@ -254,6 +247,39 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
       continue;
     }
     refreshed += 1;
+  }
+
+  // Step 3 — refresh FX cache for every distinct non-EUR currency we touched.
+  const currencies = new Set<string>();
+  for (const inst of byId.values()) {
+    const ccy = (inst.currency || "EUR").toUpperCase();
+    if (ccy !== "EUR") currencies.add(ccy);
+  }
+  if (currencies.size > 0) {
+    const { data: existingFx } = await supabase
+      .from("fx_rates")
+      .select("currency, fetched_at")
+      .in("currency", Array.from(currencies));
+    const fxByCcy = new Map((existingFx ?? []).map((r) => [r.currency, r.fetched_at]));
+    for (const ccy of currencies) {
+      const last = fxByCcy.get(ccy);
+      if (!force && last) {
+        const age = now - Date.parse(last);
+        if (Number.isFinite(age) && age < FX_TTL_MS) continue;
+      }
+      const rate = await fetchFxToEur(ccy);
+      if (rate == null) {
+        failed.push(`FX ${ccy}->EUR`);
+        continue;
+      }
+      const { error: fxErr } = await supabase
+        .from("fx_rates")
+        .upsert(
+          { currency: ccy, eur_rate: rate, fetched_at: updatedAt },
+          { onConflict: "currency" },
+        );
+      if (fxErr) failed.push(`FX ${ccy}->EUR`);
+    }
   }
 
   if (refreshed > 0) revalidatePath("/portfolio");
