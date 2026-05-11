@@ -19,6 +19,7 @@ import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
 import { DeltaPill } from "./delta-pill";
 import { EditablePrice } from "./editable-price";
 import { MoneyCell } from "./money-cell";
+import { SupportTag } from "./support-tag";
 
 type SortKey =
   | "instrumentName"
@@ -47,7 +48,7 @@ export function PositionsTable({ positions }: { positions: Position[] }) {
     key: "valuation",
     dir: "desc",
   });
-  const [openIsins, setOpenIsins] = useState<Record<string, boolean>>({});
+  const [openPositions, setOpenPositions] = useState<Record<string, boolean>>({});
 
   const sorted = useMemo(() => {
     return positions.slice().sort((a, b) => {
@@ -78,6 +79,7 @@ export function PositionsTable({ positions }: { positions: Position[] }) {
             <SortHead k="instrumentName" sort={sort} onSort={toggleSort}>
               Instrument
             </SortHead>
+            <TableHead>Support</TableHead>
             <TableHead>Type</TableHead>
             <SortHead k="qty" sort={sort} onSort={toggleSort} num>
               Quantité
@@ -108,13 +110,13 @@ export function PositionsTable({ positions }: { positions: Position[] }) {
         </TableHeader>
         <TableBody>
           {sorted.map((p) => {
-            const isOpen = !!openIsins[p.isin];
+            const isOpen = !!openPositions[p.key];
             return (
               <PositionRow
-                key={p.isin}
+                key={p.key}
                 p={p}
                 isOpen={isOpen}
-                onToggle={() => setOpenIsins((o) => ({ ...o, [p.isin]: !o[p.isin] }))}
+                onToggle={() => setOpenPositions((o) => ({ ...o, [p.key]: !o[p.key] }))}
               />
             );
           })}
@@ -184,6 +186,9 @@ function PositionRow({
           </div>
         </TableCell>
         <TableCell>
+          <SupportTag support={p.support} />
+        </TableCell>
+        <TableCell>
           <Badge variant="outline" className="uppercase">
             {p.assetClass}
           </Badge>
@@ -223,7 +228,7 @@ function PositionRow({
 function OrdersSubrow({ position }: { position: Position }) {
   return (
     <TableRow className="bg-muted/20 hover:bg-muted/20">
-      <TableCell colSpan={12} className="px-4 py-3">
+      <TableCell colSpan={13} className="px-4 py-3">
         <div className="text-muted-foreground mb-2 text-xs">
           Ordres contributeurs · {position.ordersCount} ({position.buyCount} achat
           {position.buyCount > 1 ? "s" : ""}
