@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { OrderRow, PortfolioTotals, Position } from "../aggregate";
 import { AddOrderSheet } from "./add-order-sheet";
 import { AutoRefreshPrices } from "./auto-refresh-prices";
+import { ImportSheet } from "./import-sheet";
 import { KpiStrip } from "./kpi-strip";
 import { OrdersTable } from "./orders-table";
 import { PositionsTable } from "./positions-table";
@@ -35,6 +36,7 @@ export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: P
         </div>
         <div className="flex items-center gap-2">
           <RefreshPricesButton />
+          <ImportSheet />
           <AddOrderSheet knownIsins={knownIsins} />
         </div>
       </div>

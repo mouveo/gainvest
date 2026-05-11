@@ -24,7 +24,25 @@ import type { ColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
 import { SupportTag } from "./support-tag";
 
-type Filter = "all" | "buy" | "sell";
+type Filter = "all" | "buy" | "sell" | "dividend" | "fee";
+
+const FILTER_LABEL: Record<Filter, string> = {
+  all: "Tous",
+  buy: "Achats",
+  sell: "Ventes",
+  dividend: "Coupons",
+  fee: "Frais",
+};
+
+const KIND_BADGE: Record<"buy" | "sell" | "dividend" | "fee", { label: string; cls: string }> = {
+  buy: { label: "Achat", cls: "border-success/30 bg-success/10 text-success" },
+  sell: { label: "Vente", cls: "border-danger/30 bg-danger/10 text-danger" },
+  dividend: {
+    label: "Coupon",
+    cls: "border-blue-300/40 bg-blue-50 text-blue-700 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300",
+  },
+  fee: { label: "Frais", cls: "border-warning/30 bg-warning/10 text-warning" },
+};
 
 type OrderColKey =
   | "date"
@@ -99,14 +117,14 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
           onChange={(e) => setQ(e.target.value)}
           className="w-72"
         />
-        {(["all", "buy", "sell"] as Filter[]).map((f) => (
+        {(["all", "buy", "sell", "dividend", "fee"] as Filter[]).map((f) => (
           <Button
             key={f}
             variant={filter === f ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setFilter(f)}
           >
-            {f === "all" ? "Tous" : f === "buy" ? "Achats" : "Ventes"}
+            {FILTER_LABEL[f]}
           </Button>
         ))}
 
@@ -197,26 +215,19 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
                   ) : null}
                   {shown("type") ? (
                     <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={
-                          o.kind === "buy"
-                            ? "border-success/30 bg-success/10 text-success"
-                            : "border-danger/30 bg-danger/10 text-danger"
-                        }
-                      >
-                        {o.kind === "buy" ? "Achat" : "Vente"}
+                      <Badge variant="outline" className={KIND_BADGE[o.kind].cls}>
+                        {KIND_BADGE[o.kind].label}
                       </Badge>
                     </TableCell>
                   ) : null}
                   {shown("quantite") ? (
                     <TableCell className="text-right font-mono tabular-nums">
-                      {fmtInt(o.quantity)}
+                      {o.quantity == null ? "—" : fmtInt(o.quantity)}
                     </TableCell>
                   ) : null}
                   {shown("cours") ? (
                     <TableCell className="text-right font-mono tabular-nums">
-                      {fmtNum(o.price, o.price < 50 ? 3 : 2)} €
+                      {o.price == null ? "—" : `${fmtNum(o.price, o.price < 50 ? 3 : 2)} €`}
                     </TableCell>
                   ) : null}
                   {shown("valeur") ? (

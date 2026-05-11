@@ -10,14 +10,17 @@ import type { Support } from "./types";
 export type OrderRow = {
   id: string;
   isin: string;
+  // For dividend/fee rows without an instrument, this can carry the description
+  // ("Droits de garde 2022 T3" etc.) — see queries.ts.
   instrumentName: string;
+  // "cash" is used as a fallback for fee rows without an instrument.
   assetClass: string;
   currency: string;
-  kind: "buy" | "sell";
+  kind: "buy" | "sell" | "dividend" | "fee";
   tradeDate: string;
   tradeTime: string | null;
-  quantity: number;
-  price: number;
+  quantity: number | null;
+  price: number | null;
   grossAmount: number;
   fees: number;
   executionVenue: string | null;
@@ -47,16 +50,25 @@ export type Position = {
   buyCount: number;
   sellCount: number;
   totalFees: number;
-  orders: OrderRow[];
+  orders: TradableOrder[];
 };
+
+export type TradableOrder = OrderRow & { quantity: number; price: number };
 
 export function aggregate(
   orders: OrderRow[],
   priceByIsin: Record<string, number>,
   today: Date = new Date(),
 ): Position[] {
-  const byKey = new Map<string, OrderRow[]>();
-  for (const o of orders) {
+  // Positions are derived from buy/sell only. Dividends and fees never affect
+  // PRU, quantity, valuation or position count.
+  const tradable = orders.filter(
+    (o): o is TradableOrder =>
+      (o.kind === "buy" || o.kind === "sell") && o.quantity != null && o.price != null,
+  );
+
+  const byKey = new Map<string, TradableOrder[]>();
+  for (const o of tradable) {
     const key = `${o.isin}\x01${o.support}`;
     const arr = byKey.get(key);
     if (arr) arr.push(o);

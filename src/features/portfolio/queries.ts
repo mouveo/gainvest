@@ -9,6 +9,8 @@ import type { Support } from "./types";
  * Read the current user's transactions joined with their instrument metadata
  * (RLS already restricts to the caller's rows).
  */
+const UI_KINDS = new Set(["buy", "sell", "dividend", "fee"]);
+
 export async function getOrders(): Promise<OrderRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -23,6 +25,9 @@ export async function getOrders(): Promise<OrderRow[]> {
         price,
         gross_amount,
         fees,
+        tax,
+        notes,
+        currency,
         execution_venue,
         broker,
         support,
@@ -34,34 +39,55 @@ export async function getOrders(): Promise<OrderRow[]> {
         )
       `,
     )
-    .in("kind", ["buy", "sell"])
     .order("trade_date", { ascending: false });
 
   if (error) throw error;
   if (!data) return [];
 
-  return data
-    .filter((row) => row.instrument != null)
-    .map((row): OrderRow => {
-      const instrument = row.instrument!;
-      return {
-        id: row.id,
-        isin: instrument.isin ?? "",
-        instrumentName: instrument.name,
-        assetClass: instrument.asset_class,
-        currency: instrument.currency,
-        kind: row.kind as "buy" | "sell",
-        tradeDate: row.trade_date,
-        tradeTime: row.trade_time,
-        quantity: Number(row.quantity ?? 0),
-        price: Number(row.price ?? 0),
-        grossAmount: Number(row.gross_amount ?? 0),
-        fees: Number(row.fees ?? 0),
-        executionVenue: row.execution_venue,
-        broker: row.broker,
-        support: row.support as Support,
-      };
+  const orders: OrderRow[] = [];
+  for (const row of data) {
+    if (!UI_KINDS.has(row.kind)) continue;
+    const kind = row.kind as OrderRow["kind"];
+
+    const instrument = row.instrument;
+    let isin = "";
+    let instrumentName: string;
+    let assetClass: string;
+    let currency: string;
+
+    if (instrument) {
+      isin = instrument.isin ?? "";
+      instrumentName = instrument.name;
+      assetClass = instrument.asset_class;
+      currency = instrument.currency;
+    } else if (kind === "fee") {
+      instrumentName = row.notes ?? "Frais";
+      assetClass = "cash";
+      currency = row.currency ?? "EUR";
+    } else {
+      // Non-fee row without an instrument: cannot render meaningfully.
+      continue;
+    }
+
+    orders.push({
+      id: row.id,
+      isin,
+      instrumentName,
+      assetClass,
+      currency,
+      kind,
+      tradeDate: row.trade_date,
+      tradeTime: row.trade_time,
+      quantity: row.quantity == null ? null : Number(row.quantity),
+      price: row.price == null ? null : Number(row.price),
+      grossAmount: Number(row.gross_amount ?? 0),
+      fees: Number(row.fees ?? 0) + Number(row.tax ?? 0),
+      executionVenue: row.execution_venue,
+      broker: row.broker,
+      support: row.support as Support,
     });
+  }
+  return orders;
 }
 
 /**
@@ -71,7 +97,10 @@ export async function getOrders(): Promise<OrderRow[]> {
  */
 export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<string, number>> {
   const supabase = await createClient();
-  const isins = Array.from(new Set(orders.map((o) => o.isin).filter(Boolean)));
+  const tradable = orders.filter(
+    (o) => (o.kind === "buy" || o.kind === "sell") && o.isin !== "",
+  );
+  const isins = Array.from(new Set(tradable.map((o) => o.isin)));
   if (isins.length === 0) return {};
 
   const { data, error } = await supabase
@@ -91,8 +120,8 @@ export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<strin
   // Fallback: use the most recent buy price for instruments without a quote.
   for (const isin of isins) {
     if (map[isin] != null) continue;
-    const fallback = orders.find((o) => o.isin === isin && o.kind === "buy");
-    if (fallback) map[isin] = fallback.price;
+    const fallback = tradable.find((o) => o.isin === isin && o.kind === "buy");
+    if (fallback && fallback.price != null) map[isin] = fallback.price;
   }
 
   return map;
