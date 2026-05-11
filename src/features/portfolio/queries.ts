@@ -1,0 +1,138 @@
+import "server-only";
+
+import { createClient } from "@/lib/supabase/server";
+
+import { aggregate, type OrderRow, type Position } from "./aggregate";
+
+/**
+ * Read the current user's transactions joined with their instrument metadata
+ * (RLS already restricts to the caller's rows).
+ */
+export async function getOrders(): Promise<OrderRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("transactions")
+    .select(
+      `
+        id,
+        kind,
+        trade_date,
+        trade_time,
+        quantity,
+        price,
+        gross_amount,
+        fees,
+        execution_venue,
+        broker,
+        instrument:instruments (
+          isin,
+          name,
+          asset_class,
+          currency
+        )
+      `,
+    )
+    .in("kind", ["buy", "sell"])
+    .order("trade_date", { ascending: false });
+
+  if (error) throw error;
+  if (!data) return [];
+
+  return data
+    .filter((row) => row.instrument != null)
+    .map((row): OrderRow => {
+      const instrument = row.instrument!;
+      return {
+        id: row.id,
+        isin: instrument.isin ?? "",
+        instrumentName: instrument.name,
+        assetClass: instrument.asset_class,
+        currency: instrument.currency,
+        kind: row.kind as "buy" | "sell",
+        tradeDate: row.trade_date,
+        tradeTime: row.trade_time,
+        quantity: Number(row.quantity ?? 0),
+        price: Number(row.price ?? 0),
+        grossAmount: Number(row.gross_amount ?? 0),
+        fees: Number(row.fees ?? 0),
+        executionVenue: row.execution_venue,
+        broker: row.broker,
+      };
+    });
+}
+
+/**
+ * Map of `isin -> current_price` for all instruments referenced by the user.
+ * Falls back to the average buy price when no quote has been set yet, so a
+ * brand-new position doesn't show 0 €.
+ */
+export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<string, number>> {
+  const supabase = await createClient();
+  const isins = Array.from(new Set(orders.map((o) => o.isin).filter(Boolean)));
+  if (isins.length === 0) return {};
+
+  const { data, error } = await supabase
+    .from("instruments")
+    .select("isin, current_price")
+    .in("isin", isins);
+
+  if (error) throw error;
+
+  const map: Record<string, number> = {};
+  for (const row of data ?? []) {
+    if (row.isin && row.current_price != null) {
+      map[row.isin] = Number(row.current_price);
+    }
+  }
+
+  // Fallback: use the most recent buy price for instruments without a quote.
+  for (const isin of isins) {
+    if (map[isin] != null) continue;
+    const fallback = orders.find((o) => o.isin === isin && o.kind === "buy");
+    if (fallback) map[isin] = fallback.price;
+  }
+
+  return map;
+}
+
+export async function getPositions(): Promise<{
+  orders: OrderRow[];
+  positions: Position[];
+  priceByIsin: Record<string, number>;
+}> {
+  const orders = await getOrders();
+  const priceByIsin = await getCurrentPrices(orders);
+  const positions = aggregate(orders, priceByIsin);
+  return { orders, positions, priceByIsin };
+}
+
+/**
+ * Returns the user's default account id (created by the on_auth_user_created
+ * trigger; the helper exists as a safety net for legacy users).
+ */
+export async function getDefaultAccountId(): Promise<string> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) return data.id;
+
+  // Should not happen — trigger creates one at signup — but be safe.
+  const { data: created, error: insertErr } = await supabase
+    .from("accounts")
+    .insert({ user_id: user.id, name: "Portefeuille", type: "cto", currency: "EUR" })
+    .select("id")
+    .single();
+  if (insertErr) throw insertErr;
+  return created.id;
+}
