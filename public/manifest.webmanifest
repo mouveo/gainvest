@@ -1,0 +1,21 @@
+{
+  "name": "Gainvest",
+  "short_name": "Gainvest",
+  "description": "Suivi d'investissements personnels : bourse, crypto, immobilier.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#09090b",
+  "lang": "fr",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
