@@ -67,6 +67,7 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
 
   const filtered = useMemo(() => {
     return orders
+      .filter((o) => o.kind === "buy" || o.kind === "sell")
       .filter((o) => filter === "all" || o.kind === filter)
       .filter((o) => supportFilter === "all" || o.support === supportFilter)
       .filter((o) => {
@@ -211,12 +212,12 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
                   ) : null}
                   {shown("quantite") ? (
                     <TableCell className="text-right font-mono tabular-nums">
-                      {fmtInt(o.quantity)}
+                      {o.quantity == null ? "—" : fmtInt(o.quantity)}
                     </TableCell>
                   ) : null}
                   {shown("cours") ? (
                     <TableCell className="text-right font-mono tabular-nums">
-                      {fmtNum(o.price, o.price < 50 ? 3 : 2)} €
+                      {o.price == null ? "—" : `${fmtNum(o.price, o.price < 50 ? 3 : 2)} €`}
                     </TableCell>
                   ) : null}
                   {shown("valeur") ? (

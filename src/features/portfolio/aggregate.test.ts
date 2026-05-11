@@ -74,4 +74,55 @@ describe("aggregate", () => {
     expect(positions[0]!.qty).toBe(5);
     expect(positions[0]!.ordersCount).toBe(2);
   });
+
+  it("ignores dividend and fee rows when building positions", () => {
+    const orders: OrderRow[] = [
+      makeOrder({ id: "buy1", isin: "FR0010315770", quantity: 10, price: 100 }),
+      makeOrder({
+        id: "div1",
+        isin: "FR0010315770",
+        kind: "dividend",
+        quantity: null,
+        price: null,
+        grossAmount: 25,
+      }),
+      makeOrder({
+        id: "fee1",
+        isin: "",
+        kind: "fee",
+        quantity: null,
+        price: null,
+        grossAmount: 4.03,
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0010315770: 120 });
+
+    expect(positions).toHaveLength(1);
+    const p = positions[0]!;
+    expect(p.qty).toBe(10);
+    expect(p.ordersCount).toBe(1);
+    expect(p.invested).toBe(1000);
+    expect(p.valuation).toBe(1200);
+  });
+
+  it("filters buy/sell rows with null quantity or price", () => {
+    const orders: OrderRow[] = [
+      makeOrder({ id: "ok", isin: "FR0010315770", quantity: 5, price: 100 }),
+      makeOrder({
+        id: "bad",
+        isin: "FR0010315770",
+        quantity: null,
+        price: null,
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0010315770: 120 });
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.qty).toBe(5);
+    expect(positions[0]!.ordersCount).toBe(1);
+  });
 });
