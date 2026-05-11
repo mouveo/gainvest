@@ -5,6 +5,7 @@
 // Inputs are *already filtered* to the current user via RLS.
 
 import { daysBetween, parseDate } from "./format";
+import type { Support } from "./types";
 
 export type OrderRow = {
   id: string;
@@ -21,10 +22,13 @@ export type OrderRow = {
   fees: number;
   executionVenue: string | null;
   broker: string | null;
+  support: Support;
 };
 
 export type Position = {
+  key: string;
   isin: string;
+  support: Support;
   instrumentName: string;
   assetClass: string;
   currency: string;
@@ -51,16 +55,17 @@ export function aggregate(
   priceByIsin: Record<string, number>,
   today: Date = new Date(),
 ): Position[] {
-  const byIsin = new Map<string, OrderRow[]>();
+  const byKey = new Map<string, OrderRow[]>();
   for (const o of orders) {
-    const arr = byIsin.get(o.isin);
+    const key = `${o.isin}\x01${o.support}`;
+    const arr = byKey.get(key);
     if (arr) arr.push(o);
-    else byIsin.set(o.isin, [o]);
+    else byKey.set(key, [o]);
   }
 
   const positions: Position[] = [];
 
-  for (const [isin, ords] of byIsin) {
+  for (const [key, ords] of byKey) {
     let qty = 0;
     let costBase = 0;
     let proceedsFromSell = 0;
@@ -89,7 +94,7 @@ export function aggregate(
     }
 
     const pru = qty > 0 ? (costBase - proceedsFromSell) / qty : 0;
-    const currentPrice = priceByIsin[isin] ?? 0;
+    const currentPrice = priceByIsin[first.isin] ?? 0;
     const valuation = qty * currentPrice;
     const invested = costBase - proceedsFromSell;
     const pnl = valuation - invested;
@@ -103,7 +108,9 @@ export function aggregate(
     const pnlAnnualized = invested > 0 && pnlPct > -1 ? Math.pow(1 + pnlPct, 1 / yearsHeld) - 1 : 0;
 
     positions.push({
-      isin,
+      key,
+      isin: first.isin,
+      support: first.support,
       instrumentName: first.instrumentName,
       assetClass: first.assetClass,
       currency: first.currency,

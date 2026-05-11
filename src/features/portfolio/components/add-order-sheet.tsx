@@ -24,8 +24,11 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
+import { cn } from "@/lib/utils";
+
 import { addOrder } from "../actions";
 import { fmtCcy } from "../format";
+import { SUPPORTS, type Support } from "../types";
 
 const BROKERS = [
   "Bourse Direct",
@@ -66,6 +69,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
   const [tradeTime, setTradeTime] = useState("16:30:00");
   const [executionVenue, setExecutionVenue] = useState("");
   const [broker, setBroker] = useState("Bourse Direct");
+  const [support, setSupport] = useState<Support>("CTO");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -102,6 +106,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     setTradeTime("16:30:00");
     setExecutionVenue("");
     setBroker("Bourse Direct");
+    setSupport("CTO");
     setError(null);
   };
 
@@ -135,23 +140,44 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
           </SheetDescription>
         </SheetHeader>
         <form action={submit} className="flex flex-1 flex-col gap-4 px-4">
-          <div className="bg-muted inline-flex w-fit rounded-md p-0.5 text-sm">
-            <button
-              type="button"
-              onClick={() => setKind("buy")}
-              className={`rounded-sm px-3 py-1 ${kind === "buy" ? "bg-success/10 text-success" : "text-muted-foreground"}`}
-            >
-              Achat
-            </button>
-            <button
-              type="button"
-              onClick={() => setKind("sell")}
-              className={`rounded-sm px-3 py-1 ${kind === "sell" ? "bg-danger/10 text-danger" : "text-muted-foreground"}`}
-            >
-              Vente
-            </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="bg-muted inline-flex w-fit rounded-md p-0.5 text-sm">
+              <button
+                type="button"
+                onClick={() => setKind("buy")}
+                className={`rounded-sm px-3 py-1 ${kind === "buy" ? "bg-success/10 text-success" : "text-muted-foreground"}`}
+              >
+                Achat
+              </button>
+              <button
+                type="button"
+                onClick={() => setKind("sell")}
+                className={`rounded-sm px-3 py-1 ${kind === "sell" ? "bg-danger/10 text-danger" : "text-muted-foreground"}`}
+              >
+                Vente
+              </button>
+            </div>
+
+            <div className="bg-muted inline-flex rounded-md p-0.5 text-sm">
+              {SUPPORTS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSupport(s)}
+                  className={cn(
+                    "rounded-sm px-2.5 py-1 font-medium",
+                    support === s
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
           <input type="hidden" name="kind" value={kind} />
+          <input type="hidden" name="support" value={support} />
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="isin">ISIN</Label>

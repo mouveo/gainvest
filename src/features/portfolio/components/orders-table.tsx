@@ -18,18 +18,22 @@ import {
 import type { OrderRow } from "../aggregate";
 import { deleteOrder } from "../actions";
 import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
+import { SUPPORTS, type Support } from "../types";
+import { SupportTag } from "./support-tag";
 
 type Filter = "all" | "buy" | "sell";
 
 export function OrdersTable({ orders }: { orders: OrderRow[] }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [supportFilter, setSupportFilter] = useState<"all" | Support>("all");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
     return orders
       .filter((o) => filter === "all" || o.kind === filter)
+      .filter((o) => supportFilter === "all" || o.support === supportFilter)
       .filter((o) => {
         if (!q.trim()) return true;
         const s = q.toLowerCase();
@@ -41,7 +45,7 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
       .sort((a, b) =>
         (b.tradeDate + (b.tradeTime ?? "")).localeCompare(a.tradeDate + (a.tradeTime ?? "")),
       );
-  }, [orders, q, filter]);
+  }, [orders, q, filter, supportFilter]);
 
   const onDelete = (id: string) => {
     setPendingId(id);
@@ -70,6 +74,28 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
             {f === "all" ? "Tous" : f === "buy" ? "Achats" : "Ventes"}
           </Button>
         ))}
+
+        <span className="bg-border h-4 w-px" />
+
+        <Button
+          variant={supportFilter === "all" ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setSupportFilter("all")}
+        >
+          Tous supports
+        </Button>
+
+        {SUPPORTS.map((s) => (
+          <Button
+            key={s}
+            variant={supportFilter === s ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setSupportFilter(s)}
+          >
+            {s}
+          </Button>
+        ))}
+
         <span className="text-muted-foreground ml-auto text-sm">
           {filtered.length} ordre{filtered.length > 1 ? "s" : ""}
         </span>
@@ -81,6 +107,7 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
             <TableRow className="bg-muted/40 hover:bg-muted/40">
               <TableHead>Date</TableHead>
               <TableHead>Instrument</TableHead>
+              <TableHead>Support</TableHead>
               <TableHead>Type</TableHead>
               <TableHead className="text-right">Quantité</TableHead>
               <TableHead className="text-right">Cours</TableHead>
@@ -94,7 +121,7 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10}>
+                <TableCell colSpan={11}>
                   <div className="text-muted-foreground py-12 text-center text-sm">
                     Aucun ordre — ajoute-en un via <strong>+ Nouvel ordre</strong>.
                   </div>
@@ -118,6 +145,9 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
                       <span className="font-medium">{o.instrumentName}</span>
                       <span className="text-muted-foreground font-mono text-xs">{o.isin}</span>
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    <SupportTag support={o.support} />
                   </TableCell>
                   <TableCell>
                     <Badge
