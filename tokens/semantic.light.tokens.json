@@ -1,0 +1,37 @@
+{
+  "$description": "Semantic tokens for the LIGHT theme. Reference primitives only.",
+  "color": {
+    "semantic": {
+      "background": { "$value": "{color.white}", "$type": "color" },
+      "foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "muted": { "$value": "{color.neutral.100}", "$type": "color" },
+      "muted-foreground": { "$value": "{color.neutral.500}", "$type": "color" },
+      "border": { "$value": "{color.neutral.200}", "$type": "color" },
+      "input": { "$value": "{color.neutral.200}", "$type": "color" },
+      "ring": { "$value": "{color.blue.500}", "$type": "color" },
+      "primary": { "$value": "{color.neutral.900}", "$type": "color" },
+      "primary-foreground": { "$value": "{color.neutral.50}", "$type": "color" },
+      "secondary": { "$value": "{color.neutral.100}", "$type": "color" },
+      "secondary-foreground": { "$value": "{color.neutral.900}", "$type": "color" },
+      "accent": { "$value": "{color.blue.500}", "$type": "color" },
+      "accent-foreground": { "$value": "{color.white}", "$type": "color" },
+      "success": { "$value": "{color.green.600}", "$type": "color" },
+      "success-foreground": { "$value": "{color.white}", "$type": "color" },
+      "danger": { "$value": "{color.red.600}", "$type": "color" },
+      "danger-foreground": { "$value": "{color.white}", "$type": "color" },
+      "warning": { "$value": "{color.amber.500}", "$type": "color" },
+      "warning-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "card": { "$value": "{color.white}", "$type": "color" },
+      "card-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "popover": { "$value": "{color.white}", "$type": "color" },
+      "popover-foreground": { "$value": "{color.neutral.950}", "$type": "color" }
+    }
+  },
+  "radius": {
+    "semantic": {
+      "sm": { "$value": "{radius.sm}", "$type": "dimension" },
+      "md": { "$value": "{radius.md}", "$type": "dimension" },
+      "lg": { "$value": "{radius.lg}", "$type": "dimension" }
+    }
+  }
+}

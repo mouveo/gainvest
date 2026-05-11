@@ -1,0 +1,8 @@
+node_modules
+.next
+.next-dev
+out
+build
+coverage
+pnpm-lock.yaml
+src/styles/tokens.generated.css

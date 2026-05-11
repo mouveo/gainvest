@@ -1,0 +1,30 @@
+{
+  "$description": "Semantic tokens for the DARK theme. Same keys as light, different values.",
+  "color": {
+    "semantic": {
+      "background": { "$value": "{color.neutral.950}", "$type": "color" },
+      "foreground": { "$value": "{color.neutral.50}", "$type": "color" },
+      "muted": { "$value": "{color.neutral.800}", "$type": "color" },
+      "muted-foreground": { "$value": "{color.neutral.400}", "$type": "color" },
+      "border": { "$value": "{color.neutral.800}", "$type": "color" },
+      "input": { "$value": "{color.neutral.800}", "$type": "color" },
+      "ring": { "$value": "{color.blue.400}", "$type": "color" },
+      "primary": { "$value": "{color.neutral.50}", "$type": "color" },
+      "primary-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "secondary": { "$value": "{color.neutral.800}", "$type": "color" },
+      "secondary-foreground": { "$value": "{color.neutral.50}", "$type": "color" },
+      "accent": { "$value": "{color.blue.400}", "$type": "color" },
+      "accent-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "success": { "$value": "{color.green.400}", "$type": "color" },
+      "success-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "danger": { "$value": "{color.red.400}", "$type": "color" },
+      "danger-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "warning": { "$value": "{color.amber.400}", "$type": "color" },
+      "warning-foreground": { "$value": "{color.neutral.950}", "$type": "color" },
+      "card": { "$value": "{color.neutral.900}", "$type": "color" },
+      "card-foreground": { "$value": "{color.neutral.50}", "$type": "color" },
+      "popover": { "$value": "{color.neutral.900}", "$type": "color" },
+      "popover-foreground": { "$value": "{color.neutral.50}", "$type": "color" }
+    }
+  }
+}

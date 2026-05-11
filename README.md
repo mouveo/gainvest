@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gainvest
 
-## Getting Started
+Application de suivi d'investissements personnels — bourse en premier, crypto et immobilier à terme.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router) · **React 19** · **TypeScript**
+- **Tailwind CSS v4** + **shadcn/ui** + **design tokens DTCG** + **Storybook**
+- **Supabase** (Postgres + Auth)
+- **PWA** (installable desktop + mobile)
+
+## Scripts
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm dev            # serveur de dev (régénère les tokens automatiquement)
+pnpm build          # build de prod (régénère les tokens automatiquement)
+pnpm start          # serveur de prod
+pnpm lint           # eslint
+pnpm typecheck      # tsc --noEmit
+pnpm format         # prettier --write .
+pnpm build:tokens   # régénère src/styles/tokens.generated.css depuis tokens/*.tokens.json
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Design tokens
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Trois niveaux DTCG dans `tokens/` :
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Primitives** — `tokens/primitive.tokens.json` : palette + radii bruts (`color.neutral.50`, `radius.md`).
+2. **Sémantiques** — `tokens/semantic.{light,dark}.tokens.json` : alias métier (`color.semantic.primary`, `color.semantic.success`).
+3. **Composants** — à venir avec shadcn (`button.primary.bg`, …).
 
-## Learn More
+Le script `scripts/build-tokens.mjs` aplatit l'arbre, résout les références `{color.neutral.50}` et écrit `src/styles/tokens.generated.css` (un bloc `:root` pour le light, un bloc `.dark` + `@media (prefers-color-scheme: dark)` pour le dark). Ces variables sont ensuite exposées à Tailwind v4 via `@theme inline` dans `src/app/globals.css`.
 
-To learn more about Next.js, take a look at the following resources:
+Pour ajouter / modifier un token : éditer le JSON, exécuter `pnpm build:tokens`, commit le `.json` ET le `.css` généré.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/                Next.js App Router (pages, layouts, route handlers)
+  components/ui/      Composants shadcn (générés)
+  features/           Logique métier par domaine (portfolio, …)
+  lib/                Utilitaires partagés (clients API, helpers)
+  styles/             tokens.generated.css
+tokens/               Source DTCG (JSON)
+scripts/              Outillage de build
+```
