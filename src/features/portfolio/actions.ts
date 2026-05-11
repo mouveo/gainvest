@@ -2,12 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 
+import { lookupIsin } from "@/lib/openfigi";
 import { createClient } from "@/lib/supabase/server";
+import { fetchQuotes } from "@/lib/yahoo-finance";
 
 import { getDefaultAccountId } from "./queries";
 import { SUPPORTS, type Support } from "./types";
 
 const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
+const PRICE_TTL_MS = 5 * 60 * 1000;
 
 export type AddOrderResult = { ok: true } | { ok: false; error: string };
 
@@ -123,4 +126,130 @@ function parseDec(v: FormDataEntryValue | null): number {
   const cleaned = String(v).replace(/\s/g, "").replace(",", ".");
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : 0;
+}
+
+type RefreshableInstrument = {
+  id: string;
+  isin: string | null;
+  name: string;
+  yahoo_symbol: string | null;
+  current_price_updated_at: string | null;
+};
+
+export async function refreshPrices(options?: { force?: boolean }): Promise<{
+  refreshed: number;
+  skipped: number;
+  failed: string[];
+}> {
+  const force = options?.force === true;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { refreshed: 0, skipped: 0, failed: [] };
+
+  const { data: rows, error } = await supabase
+    .from("transactions")
+    .select(
+      `
+        instrument:instruments(
+          id,
+          isin,
+          name,
+          yahoo_symbol,
+          current_price_updated_at
+        )
+      `,
+    )
+    .in("kind", ["buy", "sell"]);
+
+  if (error) throw error;
+
+  const byId = new Map<string, RefreshableInstrument>();
+  for (const row of rows ?? []) {
+    const inst = row.instrument;
+    if (!inst || !inst.id) continue;
+    if (byId.has(inst.id)) continue;
+    byId.set(inst.id, {
+      id: inst.id,
+      isin: inst.isin ?? null,
+      name: inst.name,
+      yahoo_symbol: inst.yahoo_symbol ?? null,
+      current_price_updated_at: inst.current_price_updated_at ?? null,
+    });
+  }
+
+  const failed: string[] = [];
+  let skipped = 0;
+  const now = Date.now();
+  const stale: RefreshableInstrument[] = [];
+
+  for (const inst of byId.values()) {
+    if (!force && inst.current_price_updated_at) {
+      const updatedAt = Date.parse(inst.current_price_updated_at);
+      if (Number.isFinite(updatedAt) && now - updatedAt < PRICE_TTL_MS) {
+        skipped += 1;
+        continue;
+      }
+    }
+    stale.push(inst);
+  }
+
+  for (const inst of stale) {
+    if (inst.yahoo_symbol) continue;
+    if (!inst.isin) {
+      failed.push(inst.name);
+      continue;
+    }
+    const meta = await lookupIsin(inst.isin);
+    const ticker = meta?.ticker?.trim();
+    if (!ticker) {
+      failed.push(inst.isin);
+      continue;
+    }
+    const { error: updErr } = await supabase
+      .from("instruments")
+      .update({ yahoo_symbol: ticker })
+      .eq("id", inst.id);
+    if (updErr) {
+      failed.push(inst.isin);
+      continue;
+    }
+    inst.yahoo_symbol = ticker;
+  }
+
+  const symbols = stale
+    .map((inst) => inst.yahoo_symbol)
+    .filter((s): s is string => typeof s === "string" && s.length > 0);
+
+  const quotes = symbols.length > 0 ? await fetchQuotes(symbols) : [];
+  const quoteBySymbol = new Map<string, (typeof quotes)[number]>();
+  for (const q of quotes) quoteBySymbol.set(q.symbol, q);
+
+  let refreshed = 0;
+  const updatedAt = new Date().toISOString();
+  for (const inst of stale) {
+    if (!inst.yahoo_symbol) continue;
+    const quote = quoteBySymbol.get(inst.yahoo_symbol);
+    if (!quote) {
+      failed.push(inst.isin ?? inst.name);
+      continue;
+    }
+    const { error: updErr } = await supabase
+      .from("instruments")
+      .update({
+        current_price: quote.price,
+        current_price_updated_at: updatedAt,
+      })
+      .eq("id", inst.id);
+    if (updErr) {
+      failed.push(inst.isin ?? inst.name);
+      continue;
+    }
+    refreshed += 1;
+  }
+
+  if (refreshed > 0) revalidatePath("/portfolio");
+
+  return { refreshed, skipped, failed };
 }

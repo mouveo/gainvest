@@ -98,15 +98,38 @@ export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<strin
   return map;
 }
 
+async function getPricesUpdatedAt(orders: OrderRow[]): Promise<string | null> {
+  const isins = Array.from(new Set(orders.map((o) => o.isin).filter(Boolean)));
+  if (isins.length === 0) return null;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("instruments")
+    .select("isin,current_price_updated_at")
+    .in("isin", isins);
+
+  if (error) throw error;
+
+  let latest: string | null = null;
+  for (const row of data ?? []) {
+    const ts = row.current_price_updated_at;
+    if (!ts) continue;
+    if (latest === null || ts > latest) latest = ts;
+  }
+  return latest;
+}
+
 export async function getPositions(): Promise<{
   orders: OrderRow[];
   positions: Position[];
   priceByIsin: Record<string, number>;
+  pricesUpdatedAt: string | null;
 }> {
   const orders = await getOrders();
   const priceByIsin = await getCurrentPrices(orders);
+  const pricesUpdatedAt = await getPricesUpdatedAt(orders);
   const positions = aggregate(orders, priceByIsin);
-  return { orders, positions, priceByIsin };
+  return { orders, positions, priceByIsin, pricesUpdatedAt };
 }
 
 /**
