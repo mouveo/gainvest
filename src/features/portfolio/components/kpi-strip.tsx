@@ -4,7 +4,13 @@ import type { PortfolioTotals } from "../aggregate";
 import { fmtCcy, fmtSignedCcy, fmtPct } from "../format";
 import { DeltaPill } from "./delta-pill";
 
-export function KpiStrip({ totals }: { totals: PortfolioTotals }) {
+export function KpiStrip({
+  totals,
+  pricesUpdatedAt,
+}: {
+  totals: PortfolioTotals;
+  pricesUpdatedAt: string | null;
+}) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Kpi
@@ -12,7 +18,13 @@ export function KpiStrip({ totals }: { totals: PortfolioTotals }) {
         value={fmtCcy(totals.invested, 0)}
         sub={`${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}`}
       />
-      <Kpi label="Valorisation" value={fmtCcy(totals.valuation, 0)} sub="au jour J" />
+      <Kpi
+        label="Valorisation"
+        value={fmtCcy(totals.valuation, 0)}
+        sub={
+          pricesUpdatedAt ? `MAJ ${fmtRelativeMinutes(pricesUpdatedAt)}` : "Cours non rafraîchis"
+        }
+      />
       <Kpi
         label="PnL latent"
         value={fmtSignedCcy(totals.pnl, 0)}
@@ -39,6 +51,20 @@ export function KpiStrip({ totals }: { totals: PortfolioTotals }) {
       />
     </div>
   );
+}
+
+function fmtRelativeMinutes(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.round(diff / 60_000);
+
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+
+  const days = Math.round(hours / 24);
+  return `il y a ${days} j`;
 }
 
 function Kpi({

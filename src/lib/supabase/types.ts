@@ -83,6 +83,7 @@ export type Database = {
           mic: string | null
           name: string
           symbol: string
+          yahoo_symbol: string | null
         }
         Insert: {
           asset_class: string
@@ -96,6 +97,7 @@ export type Database = {
           mic?: string | null
           name: string
           symbol: string
+          yahoo_symbol?: string | null
         }
         Update: {
           asset_class?: string
@@ -109,6 +111,7 @@ export type Database = {
           mic?: string | null
           name?: string
           symbol?: string
+          yahoo_symbol?: string | null
         }
         Relationships: []
       }
