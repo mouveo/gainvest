@@ -31,6 +31,20 @@ export default defineConfig({
           },
         },
       },
+      {
+        extends: true,
+        resolve: {
+          alias: {
+            "@": path.join(dirname, "src"),
+            "server-only": path.join(dirname, "scripts/test-stubs/server-only.js"),
+          },
+        },
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+        },
+      },
     ],
   },
 });

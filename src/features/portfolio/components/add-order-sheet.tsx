@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +49,25 @@ const ASSET_CLASSES: { value: string; label: string }[] = [
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
+
+type IsinLookupResponse =
+  | {
+      ok: true;
+      data: {
+        isin: string;
+        name: string;
+        assetClass: string;
+        currency: string;
+        country: string | null;
+        ticker: string | null;
+        source: "openfigi" | "cache";
+      };
+    }
+  | { ok: false; error: string };
+
+const ASSET_CLASS_VALUES = new Set(["etf", "equity", "fund", "bond", "crypto"]);
+
 type Props = {
   knownIsins?: { isin: string; name: string }[];
 };
@@ -71,7 +90,18 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
   const [broker, setBroker] = useState("Bourse Direct");
   const [support, setSupport] = useState<Support>("CTO");
   const [error, setError] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupPending, setLookupPending] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  const isinRef = useRef(isin);
+  const nameRef = useRef(name);
+  useEffect(() => {
+    isinRef.current = isin;
+  }, [isin]);
+  useEffect(() => {
+    nameRef.current = name;
+  }, [name]);
 
   const qN = parseDec(quantity);
   const pN = parseDec(price);
@@ -91,6 +121,43 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     if (hit && !name) setName(hit.name);
   }, [isin, knownIsins, name]);
 
+  const runLookup = useCallback(
+    async (raw: string) => {
+      const upper = raw.trim().toUpperCase();
+      if (!ISIN_RE.test(upper)) return;
+      if (knownIsins.some((k) => k.isin === upper)) return;
+
+      setLookupError(null);
+      setLookupPending(true);
+      try {
+        const res = await fetch(`/api/isin/${upper}`);
+        const json = (await res.json()) as IsinLookupResponse;
+
+        if (isinRef.current.trim().toUpperCase() !== upper) return;
+
+        if (!json.ok) {
+          setLookupError(json.error);
+          return;
+        }
+
+        if (!nameRef.current) setName(json.data.name);
+        if (ASSET_CLASS_VALUES.has(json.data.assetClass)) {
+          setAssetClass(json.data.assetClass);
+        }
+        if (json.data.currency) setCurrency(json.data.currency);
+      } catch {
+        if (isinRef.current.trim().toUpperCase() === upper) {
+          setLookupError("Lookup indisponible.");
+        }
+      } finally {
+        if (isinRef.current.trim().toUpperCase() === upper) {
+          setLookupPending(false);
+        }
+      }
+    },
+    [knownIsins],
+  );
+
   const reset = () => {
     setKind("buy");
     setIsin("");
@@ -108,6 +175,8 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     setBroker("Bourse Direct");
     setSupport("CTO");
     setError(null);
+    setLookupError(null);
+    setLookupPending(false);
   };
 
   useEffect(() => {
@@ -187,6 +256,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
               list={isinDatalistId}
               value={isin}
               onChange={(e) => setIsin(e.target.value.toUpperCase())}
+              onBlur={(e) => runLookup(e.target.value)}
               placeholder="IE00BF4RFH31"
               className="font-mono"
               required
@@ -198,6 +268,11 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
                 </option>
               ))}
             </datalist>
+            {lookupPending ? (
+              <p className="text-muted-foreground text-xs">Recherche des métadonnées…</p>
+            ) : lookupError ? (
+              <p className="text-muted-foreground text-xs">{lookupError}</p>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-1.5">
