@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 
+import { parseBondSymbol } from "../../bonds/parse-symbol";
 import type { Support } from "../../types";
 import type { AssetClass } from "../../types";
 import type { ParsedKind, ParsedRow } from "../types";
@@ -103,6 +104,11 @@ export function parseIbkrFlexXml(
       assetClass,
       tradeId,
     };
+
+    if (assetClass === "bond") {
+      const meta = parseBondSymbol(description) ?? parseBondSymbol(symbol);
+      if (meta) row.bondMetadata = meta;
+    }
 
     rows.push(row);
 

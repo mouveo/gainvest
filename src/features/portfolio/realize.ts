@@ -64,6 +64,12 @@ export type ActivePosition = {
   buyCount: number;
   sellCount: number;
   orders: TradableOrder[];
+  // Bond-only metadata + FX snapshot needed downstream (BondDetailsModal).
+  // Null for non-bond/cash positions.
+  bondCouponRate: number | null;
+  bondMaturityDate: string | null;
+  bondCouponFrequency: 1 | 2 | 4 | null;
+  fxToEur: number;
 };
 
 export type PastRealization = {
@@ -186,6 +192,9 @@ type LineState = {
   ordersTouched: TradableOrder[];
   firstBuyDate: string | null;
   realizations: PastRealization[];
+  bondCouponRate: number | null;
+  bondMaturityDate: string | null;
+  bondCouponFrequency: 1 | 2 | 4 | null;
 };
 
 function lineKey(isin: string, support: Support, broker: string | null): string {
@@ -288,6 +297,9 @@ export function replayTransactions(
         ordersTouched: [],
         firstBuyDate: null,
         realizations: [],
+        bondCouponRate: o.bondCouponRate,
+        bondMaturityDate: o.bondMaturityDate,
+        bondCouponFrequency: o.bondCouponFrequency,
       };
       lines.set(key, line);
     }
@@ -631,6 +643,10 @@ export function replayTransactions(
       buyCount: line.buyCount,
       sellCount: line.sellCount,
       orders: line.ordersTouched.slice().sort((a, b) => a.tradeDate.localeCompare(b.tradeDate)),
+      bondCouponRate: line.bondCouponRate,
+      bondMaturityDate: line.bondMaturityDate,
+      bondCouponFrequency: line.bondCouponFrequency,
+      fxToEur: price?.fxToEur ?? fxByCurrency[line.currency.toUpperCase()] ?? 1,
     });
   }
 
@@ -694,6 +710,10 @@ export function replayTransactions(
       buyCount: 0,
       sellCount: 0,
       orders: [],
+      bondCouponRate: null,
+      bondMaturityDate: null,
+      bondCouponFrequency: null,
+      fxToEur,
     });
   }
 

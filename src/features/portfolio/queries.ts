@@ -57,7 +57,10 @@ export async function getOrders(): Promise<OrderRow[]> {
           asset_class,
           currency,
           preferred_mic,
-          preferred_currency
+          preferred_currency,
+          bond_coupon_rate,
+          bond_maturity_date,
+          bond_coupon_frequency
         )
       `,
     )
@@ -79,6 +82,9 @@ export async function getOrders(): Promise<OrderRow[]> {
     let instrumentName: string;
     let assetClass: string;
     let currency: string;
+    let bondCouponRate: number | null = null;
+    let bondMaturityDate: string | null = null;
+    let bondCouponFrequency: 1 | 2 | 4 | null = null;
 
     if (instrument) {
       isin = instrument.isin ?? "";
@@ -91,6 +97,12 @@ export async function getOrders(): Promise<OrderRow[]> {
       // USD even when the instrument it references is EUR-denominated for
       // example). Native arithmetic + per-row fxRate handles the EUR view.
       currency = row.currency ?? instrument.currency;
+      bondCouponRate =
+        instrument.bond_coupon_rate == null ? null : Number(instrument.bond_coupon_rate);
+      bondMaturityDate = instrument.bond_maturity_date ?? null;
+      const rawFreq = instrument.bond_coupon_frequency;
+      bondCouponFrequency =
+        rawFreq === 1 || rawFreq === 2 || rawFreq === 4 ? rawFreq : null;
     } else {
       // Cash row without an instrument: synthetic name from notes/kind.
       instrumentName = row.notes ?? kind;
@@ -119,6 +131,9 @@ export async function getOrders(): Promise<OrderRow[]> {
       executionVenue: row.execution_venue,
       broker: row.broker,
       support: row.support as Support,
+      bondCouponRate,
+      bondMaturityDate,
+      bondCouponFrequency,
     });
   }
   return orders;

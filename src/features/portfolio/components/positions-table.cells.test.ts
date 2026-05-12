@@ -56,6 +56,10 @@ function pos(overrides: Partial<Position> = {}): Position {
     cashFlowsTotalNetFees: [],
     xirrCapitalNetFees: 0.05,
     xirrTotalNetFees: 0.05,
+    bondCouponRate: null,
+    bondMaturityDate: null,
+    bondCouponFrequency: null,
+    fxToEur: 1,
     ...overrides,
   };
 }

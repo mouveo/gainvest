@@ -1,10 +1,11 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, LineChart } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -22,6 +23,7 @@ import type { Position } from "../aggregate";
 import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
 import { ASSET_CLASS_FACETED_OPTIONS, labelAssetClass } from "../labels";
 import { SUPPORTS } from "../types";
+import { BondDetailsModal } from "./bond-details-modal";
 import { ColumnsPicker } from "./columns/columns-picker";
 import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
@@ -117,6 +119,7 @@ export function PositionsTable({
   });
 
   const [search, setSearch] = useState("");
+  const [selectedBond, setSelectedBond] = useState<Position | null>(null);
 
   const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
     POSITIONS_VISIBILITY_KEY,
@@ -148,6 +151,7 @@ export function PositionsTable({
         cell: ({ row }) => {
           const p = row.original;
           const isCash = p.assetClass === "cash";
+          const isBond = p.assetClass === "bond";
           return (
             <div className="flex items-center gap-2">
               <ChevronRight
@@ -164,6 +168,19 @@ export function PositionsTable({
                   {p.isin} · {p.currency}
                 </span>
               </div>
+              {isBond ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Détails de l'obligation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedBond(p);
+                  }}
+                >
+                  <LineChart className="size-4" />
+                </Button>
+              ) : null}
             </div>
           );
         },
@@ -452,48 +469,57 @@ export function PositionsTable({
   }
 
   return (
-    <DataTable
-      columns={columns}
-      data={filteredBySearch}
-      storageKey="gainvest:datatable:positions:state"
-      columnVisibility={visible}
-      initialState={{ sorting: [{ id: "valuation", desc: true }] }}
-      toolbar={(table) => (
-        <DataTableToolbar
-          table={table}
-          search={{
-            placeholder: "Rechercher ISIN, nom, opérateur…",
-            value: search,
-            onChange: setSearch,
-          }}
-          facetedFilters={[
-            {
-              columnId: "support",
-              title: "Support",
-              options: SUPPORTS.map((s) => ({ label: s, value: s })),
-            },
-            {
-              columnId: "type",
-              title: "Type",
-              options: [...ASSET_CLASS_FACETED_OPTIONS],
-            },
-            { columnId: "operateur", title: "Opérateur", options: operatorOptions },
-          ]}
-          trailing={
-            <ColumnsPicker
-              columns={POSITION_COLUMNS}
-              visible={visible}
-              visibleCount={visibleCount}
-              onToggle={toggle}
-              onReset={reset}
-              onShowAll={showAll}
-            />
-          }
-        />
-      )}
-      expandedRowRender={(p) => <OrdersSubrow position={p} />}
-      onVisibleRowsChange={onVisibleRowsChange}
-    />
+    <>
+      <DataTable
+        columns={columns}
+        data={filteredBySearch}
+        storageKey="gainvest:datatable:positions:state"
+        columnVisibility={visible}
+        initialState={{ sorting: [{ id: "valuation", desc: true }] }}
+        toolbar={(table) => (
+          <DataTableToolbar
+            table={table}
+            search={{
+              placeholder: "Rechercher ISIN, nom, opérateur…",
+              value: search,
+              onChange: setSearch,
+            }}
+            facetedFilters={[
+              {
+                columnId: "support",
+                title: "Support",
+                options: SUPPORTS.map((s) => ({ label: s, value: s })),
+              },
+              {
+                columnId: "type",
+                title: "Type",
+                options: [...ASSET_CLASS_FACETED_OPTIONS],
+              },
+              { columnId: "operateur", title: "Opérateur", options: operatorOptions },
+            ]}
+            trailing={
+              <ColumnsPicker
+                columns={POSITION_COLUMNS}
+                visible={visible}
+                visibleCount={visibleCount}
+                onToggle={toggle}
+                onReset={reset}
+                onShowAll={showAll}
+              />
+            }
+          />
+        )}
+        expandedRowRender={(p) => <OrdersSubrow position={p} />}
+        onVisibleRowsChange={onVisibleRowsChange}
+      />
+      <BondDetailsModal
+        open={selectedBond !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedBond(null);
+        }}
+        position={selectedBond}
+      />
+    </>
   );
 }
 

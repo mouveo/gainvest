@@ -25,6 +25,9 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     executionVenue: null,
     broker: "Interactive Brokers",
     support: "CTO",
+    bondCouponRate: null,
+    bondMaturityDate: null,
+    bondCouponFrequency: null,
     ...overrides,
   };
 }

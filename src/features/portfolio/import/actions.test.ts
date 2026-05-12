@@ -25,6 +25,9 @@ type InstrumentRow = {
   name: string;
   asset_class: string;
   currency: string;
+  bond_coupon_rate?: number | null;
+  bond_maturity_date?: string | null;
+  bond_coupon_frequency?: number | null;
 };
 
 type UpsertCall = { payload: Record<string, unknown>; opts: unknown };
@@ -254,5 +257,106 @@ describe("importBrokerOrders — broker-metadata fallback for instruments", () =
     expect(sb.upserts).toHaveLength(0);
     expect(sb.insertedTx).toHaveLength(1);
     expect(sb.insertedTx[0]!.instrument_id).toBe("inst-amzn");
+  });
+});
+
+describe("importBrokerOrders — bond metadata persistence", () => {
+  it("persists bond metadata when creating a new bond instrument", async () => {
+    lookupIsinMock.mockResolvedValue(null);
+    const sb = makeSupabase({
+      existingInstruments: [],
+      insertedInstrument: (payload) => ({
+        id: "inst-bond-1",
+        isin: payload.isin as string,
+        name: payload.name as string,
+        asset_class: payload.asset_class as string,
+        currency: payload.currency as string,
+        bond_coupon_rate: (payload.bond_coupon_rate as number | null) ?? null,
+        bond_maturity_date: (payload.bond_maturity_date as string | null) ?? null,
+        bond_coupon_frequency: (payload.bond_coupon_frequency as number | null) ?? null,
+      }),
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const row = bondBuyRow({
+      bondMetadata: { couponRate: 4.125, maturityDate: "2027-11-15", frequency: 2 },
+    });
+
+    const result = await importBrokerOrders("interactive-brokers", "CTO", [row]);
+    expect(result.ok).toBe(true);
+    expect(sb.upserts).toHaveLength(1);
+    expect(sb.upserts[0]!.payload.bond_coupon_rate).toBe(4.125);
+    expect(sb.upserts[0]!.payload.bond_maturity_date).toBe("2027-11-15");
+    expect(sb.upserts[0]!.payload.bond_coupon_frequency).toBe(2);
+  });
+
+  it("fills bond_* columns on a cached bond instrument when they are NULL", async () => {
+    lookupIsinMock.mockResolvedValue(null);
+    const sb = makeSupabase({
+      existingInstruments: [
+        {
+          id: "inst-bond-1",
+          isin: "US912828YV68",
+          name: "UST 4.125 11/15/27",
+          asset_class: "bond",
+          currency: "USD",
+          bond_coupon_rate: null,
+          bond_maturity_date: null,
+          bond_coupon_frequency: null,
+        },
+      ],
+      updatedInstrument: (id, patch) => ({
+        id,
+        isin: "US912828YV68",
+        name: "UST 4.125 11/15/27",
+        asset_class: "bond",
+        currency: "USD",
+        bond_coupon_rate: (patch.bond_coupon_rate as number | null) ?? null,
+        bond_maturity_date: (patch.bond_maturity_date as string | null) ?? null,
+        bond_coupon_frequency: (patch.bond_coupon_frequency as number | null) ?? null,
+      }),
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const row = bondBuyRow({
+      bondMetadata: { couponRate: 4.125, maturityDate: "2027-11-15", frequency: 2 },
+    });
+
+    const result = await importBrokerOrders("interactive-brokers", "CTO", [row]);
+    expect(result.ok).toBe(true);
+    expect(sb.updates).toHaveLength(1);
+    expect(sb.updates[0]!.patch.bond_coupon_rate).toBe(4.125);
+    expect(sb.updates[0]!.patch.bond_maturity_date).toBe("2027-11-15");
+    expect(sb.updates[0]!.patch.bond_coupon_frequency).toBe(2);
+    expect(sb.upserts).toHaveLength(0);
+  });
+
+  it("does not overwrite bond_* columns that are already set on the cached instrument", async () => {
+    lookupIsinMock.mockResolvedValue(null);
+    const sb = makeSupabase({
+      existingInstruments: [
+        {
+          id: "inst-bond-1",
+          isin: "US912828YV68",
+          name: "UST 4.125 11/15/27",
+          asset_class: "bond",
+          currency: "USD",
+          bond_coupon_rate: 5.5,
+          bond_maturity_date: "2099-01-01",
+          bond_coupon_frequency: 4,
+        },
+      ],
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const row = bondBuyRow({
+      bondMetadata: { couponRate: 4.125, maturityDate: "2027-11-15", frequency: 2 },
+    });
+
+    const result = await importBrokerOrders("interactive-brokers", "CTO", [row]);
+    expect(result.ok).toBe(true);
+    expect(sb.updates).toHaveLength(0);
+    expect(sb.upserts).toHaveLength(0);
+    expect(sb.insertedTx).toHaveLength(1);
   });
 });

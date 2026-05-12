@@ -91,6 +91,9 @@ export type Database = {
       instruments: {
         Row: {
           asset_class: string
+          bond_coupon_frequency: number | null
+          bond_coupon_rate: number | null
+          bond_maturity_date: string | null
           country: string | null
           created_at: string
           currency: string
@@ -109,6 +112,9 @@ export type Database = {
         }
         Insert: {
           asset_class: string
+          bond_coupon_frequency?: number | null
+          bond_coupon_rate?: number | null
+          bond_maturity_date?: string | null
           country?: string | null
           created_at?: string
           currency?: string
@@ -127,6 +133,9 @@ export type Database = {
         }
         Update: {
           asset_class?: string
+          bond_coupon_frequency?: number | null
+          bond_coupon_rate?: number | null
+          bond_maturity_date?: string | null
           country?: string | null
           created_at?: string
           currency?: string

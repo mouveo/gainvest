@@ -37,6 +37,9 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     executionVenue: null,
     broker: null,
     support: "CTO",
+    bondCouponRate: null,
+    bondMaturityDate: null,
+    bondCouponFrequency: null,
     ...overrides,
   };
 }
