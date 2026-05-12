@@ -185,7 +185,9 @@ export function PositionsTable({
       {
         id: "qty",
         accessorFn: (p) => p.qty,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Quantité" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Quantité" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">{fmtInt(row.original.qty)}</div>
         ),
@@ -193,7 +195,9 @@ export function PositionsTable({
       {
         id: "pru",
         accessorFn: (p) => p.pru,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="PRU" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="PRU" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
             {fmtNum(row.original.pru, row.original.pru < 50 ? 3 : 2)} €
@@ -203,7 +207,9 @@ export function PositionsTable({
       {
         id: "pruGross",
         accessorFn: (p) => p.pruGross,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="PRU brut" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="PRU brut" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-muted-foreground text-right font-mono tabular-nums">
             {fmtCcy(row.original.pruGross, row.original.pruGross < 50 ? 3 : 2)}
@@ -213,7 +219,9 @@ export function PositionsTable({
       {
         id: "currentPrice",
         accessorFn: (p) => p.currentPrice,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Cours actuel" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Cours actuel" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right" onClick={(e) => e.stopPropagation()}>
             <EditablePrice isin={row.original.isin} value={row.original.currentPrice} />
@@ -245,7 +253,9 @@ export function PositionsTable({
       {
         id: "invested",
         accessorFn: (p) => p.invested,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Investi" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Investi" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">{fmtCcy(row.original.invested, 0)}</div>
         ),
@@ -253,7 +263,9 @@ export function PositionsTable({
       {
         id: "valuation",
         accessorFn: (p) => p.valuation,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Valorisation" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Valorisation" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono font-medium tabular-nums">
             {fmtCcy(row.original.valuation, 0)}
@@ -263,7 +275,9 @@ export function PositionsTable({
       {
         id: "dividendsAttributed",
         accessorFn: (p) => p.dividendsAttributed,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Dividendes" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Dividendes" align="right" />
+        ),
         cell: ({ row }) => {
           const v = row.original.dividendsAttributed;
           return (
@@ -277,7 +291,7 @@ export function PositionsTable({
         id: "holdingFees",
         accessorFn: (p) => p.holdingFees,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Frais de détention" />
+          <DataTableColumnHeader column={column} title="Frais de détention" align="right" />
         ),
         cell: ({ row }) => {
           const v = row.original.holdingFees;
@@ -296,7 +310,9 @@ export function PositionsTable({
           const base = withDividends ? p.pnlTotal : p.pnlCapital;
           return base - (netOfFees ? p.holdingFees : 0);
         },
-        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="PnL" align="right" />
+        ),
         cell: ({ getValue }) => (
           <div className="text-right">
             <MoneyCell value={getValue<number>()} signed />
@@ -306,7 +322,9 @@ export function PositionsTable({
       {
         id: "pnlTotal",
         accessorFn: (p) => p.pnlTotal - (netOfFees ? p.holdingFees : 0),
-        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL total" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="PnL total" align="right" />
+        ),
         cell: ({ getValue }) => (
           <div className="text-right">
             <MoneyCell value={getValue<number>()} signed />
@@ -320,7 +338,9 @@ export function PositionsTable({
           const adj = base - (netOfFees ? p.holdingFees : 0);
           return p.invested > 0 ? adj / p.invested : 0;
         },
-        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL %" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="PnL %" align="right" />
+        ),
         cell: ({ getValue }) => (
           <div className="text-right">
             <DeltaPill value={getValue<number>()} />
@@ -349,7 +369,9 @@ export function PositionsTable({
           if (!bfinite) return -1;
           return av - bv;
         },
-        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL annualisé" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="PnL annualisé" align="right" />
+        ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
           return Number.isFinite(v) ? (
@@ -365,7 +387,7 @@ export function PositionsTable({
         id: "held",
         accessorFn: (p) => p.yearsHeld,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Durée de détention" />
+          <DataTableColumnHeader column={column} title="Durée de détention" align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original;

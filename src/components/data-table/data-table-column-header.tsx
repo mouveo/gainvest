@@ -10,15 +10,25 @@ import { cn } from "@/lib/utils";
 type DataTableColumnHeaderProps<TData, TValue> = React.HTMLAttributes<HTMLDivElement> & {
   column: Column<TData, TValue>;
   title: React.ReactNode;
+  align?: "left" | "right";
 };
 
 export function DataTableColumnHeader<TData, TValue>({
   column,
   title,
   className,
+  align = "left",
 }: DataTableColumnHeaderProps<TData, TValue>) {
+  const isRight = align === "right";
+
   if (!column.getCanSort()) {
-    return <div className={cn("text-foreground font-medium", className)}>{title}</div>;
+    return (
+      <div
+        className={cn("text-foreground font-medium", isRight && "text-right", className)}
+      >
+        {title}
+      </div>
+    );
   }
 
   const sorted = column.getIsSorted();
@@ -33,14 +43,15 @@ export function DataTableColumnHeader<TData, TValue>({
     }
   };
 
-  return (
+  const button = (
     <Button
       variant="ghost"
       size="xs"
       onClick={handleClick}
       aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none"}
       className={cn(
-        "data-[icon=inline-end]:pr-1.5 -ml-1.5 flex items-center gap-1 px-1.5 font-medium",
+        "data-[icon=inline-end]:pr-1.5 flex items-center gap-1 px-1.5 font-medium",
+        isRight ? "-mr-1.5" : "-ml-1.5",
         className,
       )}
     >
@@ -54,4 +65,6 @@ export function DataTableColumnHeader<TData, TValue>({
       )}
     </Button>
   );
+
+  return isRight ? <div className="flex justify-end">{button}</div> : button;
 }

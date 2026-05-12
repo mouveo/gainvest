@@ -171,7 +171,9 @@ export function RealizationsTable({
       {
         id: "qtySold",
         accessorFn: (r) => r.saleQty,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Quantité vendue" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Quantité vendue" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">{fmtInt(row.original.saleQty)}</div>
         ),
@@ -180,7 +182,7 @@ export function RealizationsTable({
         id: "pruAtSale",
         accessorFn: (r) => r.pruAtSale,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Prix d'achat / action" />
+          <DataTableColumnHeader column={column} title="Prix d'achat / action" align="right" />
         ),
         cell: ({ row }) => {
           const v = row.original.pruAtSale;
@@ -195,7 +197,7 @@ export function RealizationsTable({
         id: "salePrice",
         accessorFn: (r) => salePricePerShare(r),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Prix de vente / action" />
+          <DataTableColumnHeader column={column} title="Prix de vente / action" align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -209,7 +211,9 @@ export function RealizationsTable({
       {
         id: "currentPrice",
         accessorFn: (r) => priceByIsin[r.isin] ?? Number.NaN,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Cours actuel" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Cours actuel" align="right" />
+        ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
           if (!Number.isFinite(v)) {
@@ -241,7 +245,9 @@ export function RealizationsTable({
           if (sp <= 0) return Number.NaN;
           return (cp - sp) / sp;
         },
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Spread après vente" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Spread après vente" align="right" />
+        ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
           if (!Number.isFinite(v)) {
@@ -267,7 +273,9 @@ export function RealizationsTable({
       {
         id: "saleNet",
         accessorFn: (r) => r.saleNet,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Encaissé net" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Encaissé net" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
             {fmtCcy(row.original.saleNet, 2)}
@@ -278,7 +286,7 @@ export function RealizationsTable({
         id: "dividends",
         accessorFn: (r) => r.dividendsAttributed,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Dividendes attribués" />
+          <DataTableColumnHeader column={column} title="Dividendes attribués" align="right" />
         ),
         cell: ({ row }) => {
           const v = row.original.dividendsAttributed;
@@ -293,7 +301,11 @@ export function RealizationsTable({
         id: "holdingFees",
         accessorFn: (r) => r.holdingFeesAttributed,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Frais de détention attribués" />
+          <DataTableColumnHeader
+            column={column}
+            title="Frais de détention attribués"
+            align="right"
+          />
         ),
         cell: ({ row }) => {
           const v = row.original.holdingFeesAttributed;
@@ -309,7 +321,9 @@ export function RealizationsTable({
       {
         id: "realizedTotal",
         accessorFn: (r) => (withDividends ? r.pnlTotal : r.pnlCapital),
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Réalisé total" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Réalisé total" align="right" />
+        ),
         cell: ({ getValue }) => (
           <div className="text-right">
             <MoneyCell value={getValue<number>()} dp={2} signed />
@@ -328,7 +342,9 @@ export function RealizationsTable({
               : r.xirrCapital;
           return Number.isFinite(v) ? v : Number.NaN;
         },
-        header: ({ column }) => <DataTableColumnHeader column={column} title="XIRR" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="XIRR" align="right" />
+        ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
           return Number.isFinite(v) ? (
