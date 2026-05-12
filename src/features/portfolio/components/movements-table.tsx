@@ -194,7 +194,9 @@ export function MovementsTable({
       {
         id: "quantite",
         accessorFn: (o) => o.quantity ?? Number.NaN,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Quantité" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Quantité" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
             {row.original.quantity == null ? "—" : fmtInt(row.original.quantity)}
@@ -204,7 +206,9 @@ export function MovementsTable({
       {
         id: "prix",
         accessorFn: (o) => o.price ?? Number.NaN,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Prix" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Prix" align="right" />
+        ),
         cell: ({ row }) => {
           const p = row.original.price;
           return (
@@ -217,7 +221,9 @@ export function MovementsTable({
       {
         id: "valeur",
         accessorFn: (o) => o.grossAmount,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Montant brut" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Montant brut" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
             {fmtCcy(row.original.grossAmount, 2)}
@@ -227,7 +233,9 @@ export function MovementsTable({
       {
         id: "frais",
         accessorFn: (o) => o.fees,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Frais" />,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Frais" align="right" />
+        ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">{fmtCcy(row.original.fees, 2)}</div>
         ),
