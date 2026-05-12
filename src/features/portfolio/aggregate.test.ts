@@ -16,6 +16,7 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     price: 100,
     grossAmount: 1000,
     fees: 0,
+    notes: null,
     executionVenue: null,
     broker: null,
     support: "CTO",
@@ -224,5 +225,57 @@ describe("aggregate", () => {
     expect(totals.xirrTotal).toBeGreaterThan(totals.xirrCapital);
     // pnlAnnualized stays aligned with xirrCapital for compat.
     expect(totals.pnlAnnualized).toBeCloseTo(totals.xirrCapital, 6);
+  });
+
+  it("exposes Position.holdingFees and a portfolio holding-fees total with a depressed net XIRR", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-us-1",
+        isin: "US0231351067",
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "b-us-2",
+        isin: "US88160R1014",
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 5,
+        price: 200,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "f1",
+        isin: "",
+        kind: "fee",
+        tradeDate: "2025-05-12",
+        quantity: null,
+        price: null,
+        grossAmount: 40,
+        notes: "Droits de garde 2025 S1",
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+    ];
+
+    const today = new Date("2026-05-12T00:00:00Z");
+    const positions = aggregate(
+      orders,
+      { US0231351067: 121, US88160R1014: 242 },
+      today,
+    );
+    const totals = computeTotals(positions, today);
+
+    for (const p of positions) {
+      expect(p.holdingFees).toBeGreaterThan(0);
+    }
+    expect(totals.holdingFeesTotal).toBeCloseTo(40, 6);
+    expect(Number.isFinite(totals.xirrCapitalNetFees)).toBe(true);
+    expect(Number.isFinite(totals.xirrTotalNetFees)).toBe(true);
+    expect(totals.xirrCapitalNetFees).toBeLessThan(totals.xirrCapital);
+    expect(totals.xirrTotalNetFees).toBeLessThan(totals.xirrTotal);
   });
 });

@@ -8,6 +8,7 @@ import type { OrderRow, PortfolioTotals, Position } from "../aggregate";
 import type { PastRealization } from "../realize";
 import { AddOrderSheet } from "./add-order-sheet";
 import { AutoRefreshPrices } from "./auto-refresh-prices";
+import { HoldingFeesToggle, useNetOfFeesMode } from "./holding-fees-toggle";
 import { ImportSheet } from "./import-sheet";
 import { KpiStrip } from "./kpi-strip";
 import { OrdersTable } from "./orders-table";
@@ -35,6 +36,7 @@ export function PortfolioShell({
 }: Props) {
   const [tab, setTab] = useState<Tab>("positions");
   const [withDividends, setWithDividends] = usePnlMode();
+  const [netOfFees, setNetOfFees] = useNetOfFeesMode();
   const knownIsins = positions.map((p) => ({ isin: p.isin, name: p.instrumentName }));
 
   return (
@@ -54,11 +56,17 @@ export function PortfolioShell({
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-4">
         <PnlModeToggle value={withDividends} onChange={setWithDividends} />
+        <HoldingFeesToggle value={netOfFees} onChange={setNetOfFees} />
       </div>
 
-      <KpiStrip totals={totals} pricesUpdatedAt={pricesUpdatedAt} withDividends={withDividends} />
+      <KpiStrip
+        totals={totals}
+        pricesUpdatedAt={pricesUpdatedAt}
+        withDividends={withDividends}
+        netOfFees={netOfFees}
+      />
 
       <Tabs value={tab} onValueChange={(v) => v && setTab(v as Tab)}>
         <TabsList>
@@ -82,7 +90,11 @@ export function PortfolioShell({
           </TabsTrigger>
         </TabsList>
         <TabsContent value="positions" className="pt-4">
-          <PositionsTable positions={positions} withDividends={withDividends} />
+          <PositionsTable
+            positions={positions}
+            withDividends={withDividends}
+            netOfFees={netOfFees}
+          />
         </TabsContent>
         <TabsContent value="realizations" className="pt-4">
           <RealizationsTable realizations={realizations} withDividends={withDividends} />

@@ -17,6 +17,7 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     price: 100,
     grossAmount: 1000,
     fees: 0,
+    notes: null,
     executionVenue: null,
     broker: null,
     support: "CTO",
@@ -339,5 +340,217 @@ describe("replayTransactions", () => {
     const { positions } = replayTransactions(orders, { FR0010315770: 121 }, TODAY);
     expect(positions).toHaveLength(1);
     expect(positions[0]!.xirrCapital).toBeCloseTo(0.1, 2);
+  });
+
+  it("attributes holding fees only to foreign positions, not to FR holdings", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-fr",
+        isin: "FR0010315770",
+        kind: "buy",
+        tradeDate: "2022-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "b-us",
+        isin: "US0231351067",
+        kind: "buy",
+        tradeDate: "2022-01-01",
+        quantity: 5,
+        price: 200,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "f1",
+        isin: "",
+        kind: "fee",
+        tradeDate: "2022-06-30",
+        quantity: null,
+        price: null,
+        grossAmount: 40,
+        notes: "Droits de garde 2022 S1",
+        instrumentName: "Droits de garde 2022 S1",
+        assetClass: "cash",
+      }),
+    ];
+
+    const { positions } = replayTransactions(
+      orders,
+      { FR0010315770: 110, US0231351067: 220 },
+      TODAY,
+    );
+
+    const fr = positions.find((p) => p.isin === "FR0010315770")!;
+    const us = positions.find((p) => p.isin === "US0231351067")!;
+    expect(fr.holdingFeesAttributed).toBeCloseTo(0, 8);
+    expect(us.holdingFeesAttributed).toBeCloseTo(40, 8);
+  });
+
+  it("splits a holding fee between two foreign positions in proportion to their totalCost", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-us",
+        isin: "US0231351067",
+        kind: "buy",
+        tradeDate: "2022-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "b-de",
+        isin: "DE0007164600",
+        kind: "buy",
+        tradeDate: "2022-01-01",
+        quantity: 10,
+        price: 300,
+        grossAmount: 3000,
+      }),
+      makeOrder({
+        id: "f1",
+        isin: "",
+        kind: "fee",
+        tradeDate: "2022-06-30",
+        quantity: null,
+        price: null,
+        grossAmount: 40,
+        notes: "Droits de garde 2022 S1",
+        instrumentName: "Droits de garde 2022 S1",
+        assetClass: "cash",
+      }),
+    ];
+
+    const { positions } = replayTransactions(
+      orders,
+      { US0231351067: 100, DE0007164600: 300 },
+      TODAY,
+    );
+
+    const us = positions.find((p) => p.isin === "US0231351067")!;
+    const de = positions.find((p) => p.isin === "DE0007164600")!;
+    expect(us.holdingFeesAttributed).toBeCloseTo(10, 8); // 40 * 1000/4000
+    expect(de.holdingFeesAttributed).toBeCloseTo(30, 8); // 40 * 3000/4000
+  });
+
+  it("transfers a prorata of holding fees from the active line to a sell realization", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-us",
+        isin: "US0231351067",
+        kind: "buy",
+        tradeDate: "2022-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "f1",
+        isin: "",
+        kind: "fee",
+        tradeDate: "2022-06-30",
+        quantity: null,
+        price: null,
+        grossAmount: 20,
+        notes: "Droits de garde 2022 S1",
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+      makeOrder({
+        id: "s1",
+        isin: "US0231351067",
+        kind: "sell",
+        tradeDate: "2023-01-01",
+        quantity: 4,
+        price: 150,
+        grossAmount: 600,
+      }),
+    ];
+
+    const { positions, realizations } = replayTransactions(
+      orders,
+      { US0231351067: 200 },
+      TODAY,
+    );
+
+    expect(realizations).toHaveLength(1);
+    // 4/10 = 40% of the 20€ active fee follows the sold prorata.
+    expect(realizations[0]!.holdingFeesAttributed).toBeCloseTo(8, 8);
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.holdingFeesAttributed).toBeCloseTo(12, 8);
+
+    const total =
+      positions[0]!.holdingFeesAttributed +
+      realizations.reduce((s, r) => s + r.holdingFeesAttributed, 0);
+    expect(total).toBeCloseTo(20, 6);
+  });
+
+  it("ignores a holding fee charged before any foreign position exists", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "f1",
+        isin: "",
+        kind: "fee",
+        tradeDate: "2020-01-01",
+        quantity: null,
+        price: null,
+        grossAmount: 30,
+        notes: "Droits de garde",
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+      makeOrder({
+        id: "b-us",
+        isin: "US0231351067",
+        kind: "buy",
+        tradeDate: "2022-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0231351067: 200 }, TODAY);
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.holdingFeesAttributed).toBeCloseTo(0, 8);
+  });
+
+  it("emits a dated negative cash-flow for attributed holding fees and derives a lower net XIRR", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-us",
+        isin: "US0231351067",
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "f1",
+        isin: "",
+        kind: "fee",
+        tradeDate: "2025-05-12",
+        quantity: null,
+        price: null,
+        grossAmount: 20,
+        notes: "Droits de garde 2025 S1",
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0231351067: 121 }, TODAY);
+    const p = positions[0]!;
+    const feeFlow = p.cashFlowsCapitalNetFees.find(
+      (f) => f.date === "2025-05-12" && f.amount < 0,
+    );
+    expect(feeFlow).toBeDefined();
+    expect(feeFlow!.amount).toBeCloseTo(-20, 8);
+    expect(Number.isFinite(p.xirrCapitalNetFees)).toBe(true);
+    expect(p.xirrCapitalNetFees).toBeLessThan(p.xirrCapital);
+    expect(Number.isFinite(p.xirrTotalNetFees)).toBe(true);
   });
 });

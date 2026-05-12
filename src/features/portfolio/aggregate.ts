@@ -29,6 +29,9 @@ export type OrderRow = {
   price: number | null;
   grossAmount: number;
   fees: number;
+  // Free-text description preserved from the broker row. Used to detect
+  // holding-fee subtypes ("Droits de garde", "Frais de conservation").
+  notes: string | null;
   executionVenue: string | null;
   broker: string | null;
   support: Support;
@@ -73,6 +76,14 @@ export type Position = {
   xirrTotal: number;
   cashFlowsCapital: Flow[];
   cashFlowsTotal: Flow[];
+  // Custody fees ("droits de garde") allocated to this position so far. Does
+  // NOT alter totalCost / averagePrice / PRU; only feeds the *net of fees*
+  // P&L and XIRR derivatives below.
+  holdingFees: number;
+  cashFlowsCapitalNetFees: Flow[];
+  cashFlowsTotalNetFees: Flow[];
+  xirrCapitalNetFees: number;
+  xirrTotalNetFees: number;
 };
 
 function activeToPosition(p: ActivePosition): Position {
@@ -108,6 +119,11 @@ function activeToPosition(p: ActivePosition): Position {
     xirrTotal: p.xirrTotal,
     cashFlowsCapital: p.cashFlowsCapital,
     cashFlowsTotal: p.cashFlowsTotal,
+    holdingFees: p.holdingFeesAttributed,
+    cashFlowsCapitalNetFees: p.cashFlowsCapitalNetFees,
+    cashFlowsTotalNetFees: p.cashFlowsTotalNetFees,
+    xirrCapitalNetFees: p.xirrCapitalNetFees,
+    xirrTotalNetFees: p.xirrTotalNetFees,
   };
 }
 
@@ -147,7 +163,10 @@ export type PortfolioTotals = {
   pnlAnnualized: number;
   xirrCapital: number;
   xirrTotal: number;
+  xirrCapitalNetFees: number;
+  xirrTotalNetFees: number;
   dividendsTotal: number;
+  holdingFeesTotal: number;
   yearsHeld: number;
   totalFees: number;
   lines: number;
@@ -158,18 +177,28 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
   let valuation = 0;
   let totalFees = 0;
   let dividendsTotal = 0;
+  let holdingFeesTotal = 0;
   let weightedDateMs = 0;
   const cfCapital: Flow[] = [];
   const cfTotal: Flow[] = [];
+  const cfCapitalNetFees: Flow[] = [];
+  const cfTotalNetFees: Flow[] = [];
 
   for (const p of positions) {
     invested += p.invested;
     valuation += p.valuation;
     totalFees += p.totalFees;
     dividendsTotal += p.dividendsAttributed;
+    holdingFeesTotal += p.holdingFees;
     weightedDateMs += p.meanDate.getTime() * p.invested;
     if (p.cashFlowsCapital) for (const f of p.cashFlowsCapital) cfCapital.push(f);
     if (p.cashFlowsTotal) for (const f of p.cashFlowsTotal) cfTotal.push(f);
+    if (p.cashFlowsCapitalNetFees) {
+      for (const f of p.cashFlowsCapitalNetFees) cfCapitalNetFees.push(f);
+    }
+    if (p.cashFlowsTotalNetFees) {
+      for (const f of p.cashFlowsTotalNetFees) cfTotalNetFees.push(f);
+    }
   }
 
   const pnl = valuation - invested;
@@ -180,6 +209,8 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
   const yearsHeld = Math.max(0.01, daysBetween(new Date(meanDateMs), today) / 365.25);
   const xirrCapital = xirr(cfCapital);
   const xirrTotal = xirr(cfTotal);
+  const xirrCapitalNetFees = xirr(cfCapitalNetFees);
+  const xirrTotalNetFees = xirr(cfTotalNetFees);
 
   return {
     invested,
@@ -191,7 +222,10 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     pnlAnnualized: Number.isFinite(xirrCapital) ? xirrCapital : 0,
     xirrCapital,
     xirrTotal,
+    xirrCapitalNetFees,
+    xirrTotalNetFees,
     dividendsTotal,
+    holdingFeesTotal,
     yearsHeld,
     totalFees,
     lines: positions.length,

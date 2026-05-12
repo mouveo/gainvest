@@ -7,6 +7,7 @@
 // two successive sells never reuse the same flow.
 
 import type { OrderRow, TradableOrder } from "./aggregate";
+import { isForeignIsin, isHoldingFee } from "./holding-fees";
 import type { Support } from "./types";
 import { xirr, type Flow } from "./xirr";
 
@@ -33,6 +34,11 @@ export type ActivePosition = {
   xirrTotal: number;
   cashFlowsCapital: Flow[];
   cashFlowsTotal: Flow[];
+  holdingFeesAttributed: number;
+  cashFlowsCapitalNetFees: Flow[];
+  cashFlowsTotalNetFees: Flow[];
+  xirrCapitalNetFees: number;
+  xirrTotalNetFees: number;
   firstBuyDate: Date;
   daysHeld: number;
   yearsHeld: number;
@@ -54,10 +60,13 @@ export type PastRealization = {
   costBasis: number;
   pruAtSale: number;
   dividendsAttributed: number;
+  holdingFeesAttributed: number;
   pnlCapital: number;
   pnlTotal: number;
   xirrCapital: number;
   xirrTotal: number;
+  xirrCapitalNetFees: number;
+  xirrTotalNetFees: number;
 };
 
 export type ReplayResult = {
@@ -121,6 +130,8 @@ type LineState = {
   divPerShareEntryAvg: number;
   activeBuyFlows: Flow[];
   activeDividendFlows: Flow[];
+  activeHoldingFeeFlows: Flow[];
+  holdingFeesActive: number;
   totalFees: number;
   buyCount: number;
   sellCount: number;
@@ -158,6 +169,8 @@ export function replayTransactions(
         divPerShareEntryAvg: 0,
         activeBuyFlows: [],
         activeDividendFlows: [],
+        activeHoldingFeeFlows: [],
+        holdingFeesActive: 0,
         totalFees: 0,
         buyCount: 0,
         sellCount: 0,
@@ -218,7 +231,11 @@ export function replayTransactions(
 
       const buySplit = splitFlows(line.activeBuyFlows, ratio);
       const divSplit = splitFlows(line.activeDividendFlows, ratio);
+      const feeSplit = splitFlows(line.activeHoldingFeeFlows, ratio);
       const dividendsAttributed = sumFlows(divSplit.consumed);
+      // Holding-fee flows are stored as negative amounts, so the attributed
+      // (positive) amount is the negation of their sum.
+      const holdingFeesAttributed = -sumFlows(feeSplit.consumed);
 
       const cashFlowsCapital: Flow[] = [
         ...buySplit.consumed,
@@ -229,7 +246,21 @@ export function replayTransactions(
         ...divSplit.consumed,
         { date: o.tradeDate, amount: saleNet },
       ];
+      const cashFlowsCapitalNetFees: Flow[] = [
+        ...buySplit.consumed,
+        ...feeSplit.consumed,
+        { date: o.tradeDate, amount: saleNet },
+      ];
+      const cashFlowsTotalNetFees: Flow[] = [
+        ...buySplit.consumed,
+        ...divSplit.consumed,
+        ...feeSplit.consumed,
+        { date: o.tradeDate, amount: saleNet },
+      ];
 
+      // pnlCapital / pnlTotal remain the gross (fiscal) view — holding fees
+      // never alter PRU, totalCost, or the realized capital P&L. They are
+      // only surfaced through the *NetFees XIRR variants.
       const pnlCapital = saleNet - costBasis;
       const pnlTotal = saleNet + dividendsAttributed - costBasis;
 
@@ -245,10 +276,13 @@ export function replayTransactions(
         costBasis,
         pruAtSale,
         dividendsAttributed,
+        holdingFeesAttributed,
         pnlCapital,
         pnlTotal,
         xirrCapital: xirr(cashFlowsCapital),
         xirrTotal: xirr(cashFlowsTotal),
+        xirrCapitalNetFees: xirr(cashFlowsCapitalNetFees),
+        xirrTotalNetFees: xirr(cashFlowsTotalNetFees),
       };
       realizations.push(realization);
       line.realizations.push(realization);
@@ -258,13 +292,45 @@ export function replayTransactions(
       line.qty -= cappedQty;
       line.activeBuyFlows = buySplit.remaining;
       line.activeDividendFlows = divSplit.remaining;
+      line.activeHoldingFeeFlows = feeSplit.remaining;
+      line.holdingFeesActive -= holdingFeesAttributed;
       line.totalFees += o.fees ?? 0;
       line.sellCount += 1;
       line.ordersTouched.push(o as TradableOrder);
       continue;
     }
 
-    // kind === "fee": standalone fee rows are not attributed to a position.
+    // kind === "fee": a custody-fee row ("droits de garde") is split across
+    // active foreign positions in proportion to their totalCost. KIND_ORDER
+    // places fees AFTER buys/dividends/sells of the same day, so the snapshot
+    // of eligible lines reflects every same-day buy and the remaining qty
+    // after every same-day sell. Standalone fees with another label fall
+    // through and are ignored.
+    if (o.kind === "fee" && isHoldingFee(o.notes)) {
+      const totalFee = o.grossAmount;
+      if (totalFee <= 0) continue;
+
+      const eligible: LineState[] = [];
+      let totalInvested = 0;
+      for (const candidate of lines.values()) {
+        if (candidate.qty <= 0) continue;
+        if (!isForeignIsin(candidate.isin)) continue;
+        if (candidate.totalCost <= 0) continue;
+        eligible.push(candidate);
+        totalInvested += candidate.totalCost;
+      }
+      if (eligible.length === 0 || totalInvested <= 0) continue;
+
+      for (const candidate of eligible) {
+        const share = (candidate.totalCost / totalInvested) * totalFee;
+        candidate.holdingFeesActive += share;
+        candidate.activeHoldingFeeFlows.push({
+          date: o.tradeDate,
+          amount: -share,
+        });
+      }
+      continue;
+    }
   }
 
   const todayStr = toISODate(today);
@@ -288,6 +354,17 @@ export function replayTransactions(
     const cashFlowsTotal: Flow[] = [
       ...line.activeBuyFlows,
       ...line.activeDividendFlows,
+      { date: todayStr, amount: valuation },
+    ];
+    const cashFlowsCapitalNetFees: Flow[] = [
+      ...line.activeBuyFlows,
+      ...line.activeHoldingFeeFlows,
+      { date: todayStr, amount: valuation },
+    ];
+    const cashFlowsTotalNetFees: Flow[] = [
+      ...line.activeBuyFlows,
+      ...line.activeDividendFlows,
+      ...line.activeHoldingFeeFlows,
       { date: todayStr, amount: valuation },
     ];
 
@@ -323,6 +400,11 @@ export function replayTransactions(
       xirrTotal: xirr(cashFlowsTotal),
       cashFlowsCapital,
       cashFlowsTotal,
+      holdingFeesAttributed: line.holdingFeesActive,
+      cashFlowsCapitalNetFees,
+      cashFlowsTotalNetFees,
+      xirrCapitalNetFees: xirr(cashFlowsCapitalNetFees),
+      xirrTotalNetFees: xirr(cashFlowsTotalNetFees),
       firstBuyDate,
       daysHeld: Math.round(days),
       yearsHeld,

@@ -35,6 +35,7 @@ type SortKey =
   | "pnlPct"
   | "pnlAnnualized"
   | "dividendsAttributed"
+  | "holdingFees"
   | "pnlTotal";
 
 const NUMERIC: SortKey[] = [
@@ -47,6 +48,7 @@ const NUMERIC: SortKey[] = [
   "pnlPct",
   "pnlAnnualized",
   "dividendsAttributed",
+  "holdingFees",
   "pnlTotal",
 ];
 
@@ -60,6 +62,7 @@ type PositionColKey =
   | "invested"
   | "valuation"
   | "dividendsAttributed"
+  | "holdingFees"
   | "pnl"
   | "pnlTotal"
   | "pnlPct"
@@ -76,6 +79,7 @@ const POSITION_COLUMNS: readonly ColumnDef<PositionColKey>[] = [
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
   { key: "dividendsAttributed", label: "Dividendes", num: true, defaultVisible: true },
+  { key: "holdingFees", label: "Frais détention", num: true, defaultVisible: false },
   { key: "pnl", label: "PnL", num: true, defaultVisible: true },
   { key: "pnlTotal", label: "PnL + div", num: true, defaultVisible: false },
   { key: "pnlPct", label: "PnL %", num: true, defaultVisible: true },
@@ -86,9 +90,11 @@ const POSITION_COLUMNS: readonly ColumnDef<PositionColKey>[] = [
 export function PositionsTable({
   positions,
   withDividends = false,
+  netOfFees = false,
 }: {
   positions: Position[];
   withDividends?: boolean;
+  netOfFees?: boolean;
 }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
     key: "valuation",
@@ -175,6 +181,11 @@ export function PositionsTable({
                   Dividendes
                 </SortHead>
               ) : null}
+              {shown("holdingFees") ? (
+                <SortHead k="holdingFees" sort={sort} onSort={toggleSort} num>
+                  Frais détention
+                </SortHead>
+              ) : null}
               {shown("pnl") ? (
                 <SortHead k="pnl" sort={sort} onSort={toggleSort} num>
                   PnL
@@ -210,6 +221,7 @@ export function PositionsTable({
                   shown={shown}
                   tableColSpan={tableColSpan}
                   withDividends={withDividends}
+                  netOfFees={netOfFees}
                 />
               );
             })}
@@ -255,6 +267,7 @@ function PositionRow({
   shown,
   tableColSpan,
   withDividends,
+  netOfFees,
 }: {
   p: Position;
   isOpen: boolean;
@@ -262,11 +275,20 @@ function PositionRow({
   shown: (k: PositionColKey) => boolean;
   tableColSpan: number;
   withDividends: boolean;
+  netOfFees: boolean;
 }) {
   void NUMERIC; // referenced for SortKey union — keeps the runtime constant alive for future filters.
-  const pnlDisplay = withDividends ? p.pnlTotal : p.pnlCapital;
-  const pnlPctDisplay = withDividends ? p.pnlPctTotal : p.pnlPctCapital;
-  const xirrDisplay = withDividends ? p.xirrTotal : p.xirrCapital;
+  const basePnl = withDividends ? p.pnlTotal : p.pnlCapital;
+  const pnlDisplay = basePnl - (netOfFees ? p.holdingFees : 0);
+  const pnlPctDisplay = p.invested > 0 ? pnlDisplay / p.invested : 0;
+  const pnlTotalDisplay = p.pnlTotal - (netOfFees ? p.holdingFees : 0);
+  const xirrDisplay = netOfFees
+    ? withDividends
+      ? p.xirrTotalNetFees
+      : p.xirrCapitalNetFees
+    : withDividends
+      ? p.xirrTotal
+      : p.xirrCapital;
   return (
     <>
       <TableRow
@@ -328,6 +350,15 @@ function PositionRow({
             {p.dividendsAttributed > 0.005 ? fmtCcy(p.dividendsAttributed, 0) : "—"}
           </TableCell>
         ) : null}
+        {shown("holdingFees") ? (
+          <TableCell className="text-right">
+            {p.holdingFees > 0.005 ? (
+              <MoneyCell value={p.holdingFees} dp={2} />
+            ) : (
+              <span className="text-muted-foreground font-mono tabular-nums">—</span>
+            )}
+          </TableCell>
+        ) : null}
         {shown("pnl") ? (
           <TableCell className="text-right">
             <MoneyCell value={pnlDisplay} signed />
@@ -335,7 +366,7 @@ function PositionRow({
         ) : null}
         {shown("pnlTotal") ? (
           <TableCell className="text-right">
-            <MoneyCell value={p.pnlTotal} signed />
+            <MoneyCell value={pnlTotalDisplay} signed />
           </TableCell>
         ) : null}
         {shown("pnlPct") ? (
