@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import type { OrderRow, PortfolioTotals, Position } from "../aggregate";
+import type { PastRealization } from "../realize";
 import { AddOrderSheet } from "./add-order-sheet";
 import { AutoRefreshPrices } from "./auto-refresh-prices";
 import { ImportSheet } from "./import-sheet";
@@ -12,17 +13,27 @@ import { KpiStrip } from "./kpi-strip";
 import { OrdersTable } from "./orders-table";
 import { PnlModeToggle, usePnlMode } from "./pnl-mode-toggle";
 import { PositionsTable } from "./positions-table";
+import { RealizationsTable } from "./realizations-table";
 import { RefreshPricesButton } from "./refresh-prices-button";
+
+type Tab = "positions" | "realizations" | "orders";
 
 type Props = {
   positions: Position[];
   orders: OrderRow[];
+  realizations: PastRealization[];
   totals: PortfolioTotals;
   pricesUpdatedAt: string | null;
 };
 
-export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: Props) {
-  const [tab, setTab] = useState<"positions" | "orders">("positions");
+export function PortfolioShell({
+  positions,
+  orders,
+  realizations,
+  totals,
+  pricesUpdatedAt,
+}: Props) {
+  const [tab, setTab] = useState<Tab>("positions");
   const [withDividends, setWithDividends] = usePnlMode();
   const knownIsins = positions.map((p) => ({ isin: p.isin, name: p.instrumentName }));
 
@@ -49,12 +60,18 @@ export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: P
 
       <KpiStrip totals={totals} pricesUpdatedAt={pricesUpdatedAt} withDividends={withDividends} />
 
-      <Tabs value={tab} onValueChange={(v) => v && setTab(v as "positions" | "orders")}>
+      <Tabs value={tab} onValueChange={(v) => v && setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="positions">
             Positions
             <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
               {positions.length}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger value="realizations">
+            Détention passée
+            <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
+              {realizations.length}
             </span>
           </TabsTrigger>
           <TabsTrigger value="orders">
@@ -66,6 +83,9 @@ export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: P
         </TabsList>
         <TabsContent value="positions" className="pt-4">
           <PositionsTable positions={positions} withDividends={withDividends} />
+        </TabsContent>
+        <TabsContent value="realizations" className="pt-4">
+          <RealizationsTable realizations={realizations} withDividends={withDividends} />
         </TabsContent>
         <TabsContent value="orders" className="pt-4">
           <OrdersTable orders={orders} />

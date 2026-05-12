@@ -231,6 +231,99 @@ describe("replayTransactions", () => {
     expect(realizations).toHaveLength(0);
   });
 
+  it("emits one realization per sell with the expected per-sale fields", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b1",
+        kind: "buy",
+        tradeDate: "2020-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "s1",
+        kind: "sell",
+        tradeDate: "2022-01-01",
+        quantity: 5,
+        price: 150,
+        grossAmount: 750,
+        fees: 2,
+      }),
+    ];
+
+    const { realizations } = replayTransactions(orders, { FR0010315770: 200 }, TODAY);
+
+    expect(realizations).toHaveLength(1);
+    const r = realizations[0]!;
+    expect(r.saleDate).toBe("2022-01-01");
+    expect(r.saleQty).toBe(5);
+    expect(r.pruAtSale).toBeCloseTo(100, 8);
+    expect(r.costBasis).toBeCloseTo(500, 8);
+    expect(r.saleNet).toBeCloseTo(748, 8); // 750 - 2 fee
+    expect(r.pnlCapital).toBeCloseTo(248, 8);
+    expect(r.support).toBe("CTO");
+    expect(r.isin).toBe("FR0010315770");
+  });
+
+  it("splits dividends prorata between active position and successive sells", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b1",
+        kind: "buy",
+        tradeDate: "2020-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "d1",
+        kind: "dividend",
+        tradeDate: "2020-06-01",
+        quantity: null,
+        price: null,
+        grossAmount: 100,
+      }),
+      makeOrder({
+        id: "s1",
+        kind: "sell",
+        tradeDate: "2021-01-01",
+        quantity: 4,
+        price: 120,
+        grossAmount: 480,
+      }),
+      makeOrder({
+        id: "s2",
+        kind: "sell",
+        tradeDate: "2022-01-01",
+        quantity: 3,
+        price: 150,
+        grossAmount: 450,
+      }),
+    ];
+
+    const { realizations, positions } = replayTransactions(
+      orders,
+      { FR0010315770: 200 },
+      TODAY,
+    );
+
+    expect(realizations).toHaveLength(2);
+    // First sale: 4/10 = 40% of dividends so far (100€) -> 40€
+    expect(realizations[0]!.dividendsAttributed).toBeCloseTo(40, 8);
+    // After first sale, 60€ of dividends remain. Second sale: 3/6 = 50% -> 30€
+    expect(realizations[1]!.dividendsAttributed).toBeCloseTo(30, 8);
+    // Active position keeps the remaining 30€
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.qty).toBe(3);
+    expect(positions[0]!.dividendsAttributed).toBeCloseTo(30, 8);
+    // Total dividends attributed across active + realizations sums back to 100€
+    const totalAttributed =
+      positions[0]!.dividendsAttributed +
+      realizations.reduce((s, r) => s + r.dividendsAttributed, 0);
+    expect(totalAttributed).toBeCloseTo(100, 6);
+  });
+
   it("computes a positive XIRR for a profitable held position", () => {
     const orders: OrderRow[] = [
       makeOrder({

@@ -12,13 +12,14 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function PortfolioPage() {
-  const { orders, positions, pricesUpdatedAt } = await getPositions();
+  const { orders, positions, realizations, pricesUpdatedAt } = await getPositions();
   const totals = computeTotals(positions);
 
   return (
     <PortfolioShell
       positions={positions}
       orders={orders}
+      realizations={realizations}
       totals={totals}
       pricesUpdatedAt={pricesUpdatedAt}
     />
