@@ -7,10 +7,17 @@ import { DeltaPill } from "./delta-pill";
 export function KpiStrip({
   totals,
   pricesUpdatedAt,
+  withDividends = false,
 }: {
   totals: PortfolioTotals;
   pricesUpdatedAt: string | null;
+  withDividends?: boolean;
 }) {
+  const pnlValue = withDividends ? totals.pnlTotal : totals.pnl;
+  const pnlPctValue = withDividends ? totals.pnlPctTotal : totals.pnlPct;
+  const xirrValue = withDividends ? totals.xirrTotal : totals.xirrCapital;
+  const mwrSubLabel = withDividends ? "MWR · avec divs" : "MWR · capital seul";
+
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Kpi
@@ -27,27 +34,27 @@ export function KpiStrip({
       />
       <Kpi
         label="PnL latent"
-        value={fmtSignedCcy(totals.pnl, 0)}
+        value={fmtSignedCcy(pnlValue, 0)}
         valueClassName={
-          totals.pnl >= 0 ? "text-success" : totals.pnl < 0 ? "text-danger" : undefined
+          pnlValue >= 0 ? "text-success" : pnlValue < 0 ? "text-danger" : undefined
         }
         sub={
           <span className="inline-flex items-center gap-1">
-            <DeltaPill value={totals.pnlPct} /> total
+            <DeltaPill value={pnlPctValue} /> total
           </span>
         }
       />
       <Kpi
         label="PnL annualisé"
-        value={fmtPct(totals.pnlAnnualized, 1)}
+        value={Number.isFinite(xirrValue) ? fmtPct(xirrValue, 1) : "—"}
         valueClassName={
-          totals.pnlAnnualized >= 0
-            ? "text-success"
-            : totals.pnlAnnualized < 0
-              ? "text-danger"
-              : undefined
+          !Number.isFinite(xirrValue)
+            ? "text-muted-foreground"
+            : xirrValue >= 0
+              ? "text-success"
+              : "text-danger"
         }
-        sub={`durée moyenne ${totals.yearsHeld.toFixed(1)} a`}
+        sub={mwrSubLabel}
       />
     </div>
   );

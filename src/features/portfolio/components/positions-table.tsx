@@ -33,7 +33,9 @@ type SortKey =
   | "valuation"
   | "pnl"
   | "pnlPct"
-  | "pnlAnnualized";
+  | "pnlAnnualized"
+  | "dividendsAttributed"
+  | "pnlTotal";
 
 const NUMERIC: SortKey[] = [
   "qty",
@@ -44,6 +46,8 @@ const NUMERIC: SortKey[] = [
   "pnl",
   "pnlPct",
   "pnlAnnualized",
+  "dividendsAttributed",
+  "pnlTotal",
 ];
 
 type PositionColKey =
@@ -55,7 +59,9 @@ type PositionColKey =
   | "currentPrice"
   | "invested"
   | "valuation"
+  | "dividendsAttributed"
   | "pnl"
+  | "pnlTotal"
   | "pnlPct"
   | "pnlAnnualized"
   | "held";
@@ -69,13 +75,21 @@ const POSITION_COLUMNS: readonly ColumnDef<PositionColKey>[] = [
   { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
+  { key: "dividendsAttributed", label: "Dividendes", num: true, defaultVisible: true },
   { key: "pnl", label: "PnL", num: true, defaultVisible: true },
+  { key: "pnlTotal", label: "PnL + div", num: true, defaultVisible: false },
   { key: "pnlPct", label: "PnL %", num: true, defaultVisible: true },
   { key: "pnlAnnualized", label: "PnL / an", num: true, defaultVisible: true },
   { key: "held", label: "Détention", num: true, defaultVisible: true },
 ];
 
-export function PositionsTable({ positions }: { positions: Position[] }) {
+export function PositionsTable({
+  positions,
+  withDividends = false,
+}: {
+  positions: Position[];
+  withDividends?: boolean;
+}) {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
     key: "valuation",
     dir: "desc",
@@ -156,9 +170,19 @@ export function PositionsTable({ positions }: { positions: Position[] }) {
                   Valorisation
                 </SortHead>
               ) : null}
+              {shown("dividendsAttributed") ? (
+                <SortHead k="dividendsAttributed" sort={sort} onSort={toggleSort} num>
+                  Dividendes
+                </SortHead>
+              ) : null}
               {shown("pnl") ? (
                 <SortHead k="pnl" sort={sort} onSort={toggleSort} num>
                   PnL
+                </SortHead>
+              ) : null}
+              {shown("pnlTotal") ? (
+                <SortHead k="pnlTotal" sort={sort} onSort={toggleSort} num>
+                  PnL + div
                 </SortHead>
               ) : null}
               {shown("pnlPct") ? (
@@ -185,6 +209,7 @@ export function PositionsTable({ positions }: { positions: Position[] }) {
                   onToggle={() => setOpenPositions((o) => ({ ...o, [p.key]: !o[p.key] }))}
                   shown={shown}
                   tableColSpan={tableColSpan}
+                  withDividends={withDividends}
                 />
               );
             })}
@@ -229,14 +254,19 @@ function PositionRow({
   onToggle,
   shown,
   tableColSpan,
+  withDividends,
 }: {
   p: Position;
   isOpen: boolean;
   onToggle: () => void;
   shown: (k: PositionColKey) => boolean;
   tableColSpan: number;
+  withDividends: boolean;
 }) {
   void NUMERIC; // referenced for SortKey union — keeps the runtime constant alive for future filters.
+  const pnlDisplay = withDividends ? p.pnlTotal : p.pnlCapital;
+  const pnlPctDisplay = withDividends ? p.pnlPctTotal : p.pnlPctCapital;
+  const xirrDisplay = withDividends ? p.xirrTotal : p.xirrCapital;
   return (
     <>
       <TableRow
@@ -293,19 +323,33 @@ function PositionRow({
             {fmtCcy(p.valuation, 0)}
           </TableCell>
         ) : null}
+        {shown("dividendsAttributed") ? (
+          <TableCell className="text-right font-mono tabular-nums">
+            {p.dividendsAttributed > 0.005 ? fmtCcy(p.dividendsAttributed, 0) : "—"}
+          </TableCell>
+        ) : null}
         {shown("pnl") ? (
           <TableCell className="text-right">
-            <MoneyCell value={p.pnl} signed />
+            <MoneyCell value={pnlDisplay} signed />
+          </TableCell>
+        ) : null}
+        {shown("pnlTotal") ? (
+          <TableCell className="text-right">
+            <MoneyCell value={p.pnlTotal} signed />
           </TableCell>
         ) : null}
         {shown("pnlPct") ? (
           <TableCell className="text-right">
-            <DeltaPill value={p.pnlPct} />
+            <DeltaPill value={pnlPctDisplay} />
           </TableCell>
         ) : null}
         {shown("pnlAnnualized") ? (
           <TableCell className="text-right">
-            <DeltaPill value={p.pnlAnnualized} />
+            {Number.isFinite(xirrDisplay) ? (
+              <DeltaPill value={xirrDisplay} />
+            ) : (
+              <span className="text-muted-foreground font-mono text-xs">—</span>
+            )}
           </TableCell>
         ) : null}
         {shown("held") ? (

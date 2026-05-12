@@ -10,6 +10,7 @@ import { AutoRefreshPrices } from "./auto-refresh-prices";
 import { ImportSheet } from "./import-sheet";
 import { KpiStrip } from "./kpi-strip";
 import { OrdersTable } from "./orders-table";
+import { PnlModeToggle, usePnlMode } from "./pnl-mode-toggle";
 import { PositionsTable } from "./positions-table";
 import { RefreshPricesButton } from "./refresh-prices-button";
 
@@ -22,6 +23,7 @@ type Props = {
 
 export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: Props) {
   const [tab, setTab] = useState<"positions" | "orders">("positions");
+  const [withDividends, setWithDividends] = usePnlMode();
   const knownIsins = positions.map((p) => ({ isin: p.isin, name: p.instrumentName }));
 
   return (
@@ -41,7 +43,11 @@ export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: P
         </div>
       </div>
 
-      <KpiStrip totals={totals} pricesUpdatedAt={pricesUpdatedAt} />
+      <div className="flex justify-end">
+        <PnlModeToggle value={withDividends} onChange={setWithDividends} />
+      </div>
+
+      <KpiStrip totals={totals} pricesUpdatedAt={pricesUpdatedAt} withDividends={withDividends} />
 
       <Tabs value={tab} onValueChange={(v) => v && setTab(v as "positions" | "orders")}>
         <TabsList>
@@ -59,7 +65,7 @@ export function PortfolioShell({ positions, orders, totals, pricesUpdatedAt }: P
           </TabsTrigger>
         </TabsList>
         <TabsContent value="positions" className="pt-4">
-          <PositionsTable positions={positions} />
+          <PositionsTable positions={positions} withDividends={withDividends} />
         </TabsContent>
         <TabsContent value="orders" className="pt-4">
           <OrdersTable orders={orders} />
