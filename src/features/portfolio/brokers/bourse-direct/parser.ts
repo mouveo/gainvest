@@ -1,7 +1,7 @@
 import type { Support } from "../../types";
-import type { Market, ParsedKind, ParsedRow } from "../types";
+import type { FeeBreakdown, FileParseResult, Market, ParsedKind, ParsedRow } from "../types";
 
-import { solveBourseDirectGrossFromTotal } from "./fees";
+import { computeBourseDirectFees, solveBourseDirectGrossFromTotal } from "./fees";
 
 // Espaces tolérés dans les nombres FR : normal, insécable, fine insécable.
 const FR_SPACES_RE = /[\s  ]+/g;
@@ -11,6 +11,7 @@ const KIND_MAP: Record<string, ParsedKind> = {
   Vente: "sell",
   Coupons: "dividend",
   Frais: "fee",
+  Liquidation: "sell",
 };
 
 const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
@@ -99,30 +100,94 @@ function extractQuantityFromDescription(desc: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-// Si une description non-quotée contient une virgule, splitCsvLine retourne
-// plus de 6 colonnes. On recolle alors les colonnes du milieu (positions
-// 3..N-2) dans la description.
-function normalizeFields(fields: string[]): string[] {
-  if (fields.length <= 6) return fields;
-  const [date, quoi, isin, ...rest] = fields;
-  const montant = rest.pop()!;
-  const qte = rest.pop()!;
-  const description = rest.join(",");
-  return [date!, quoi!, isin!, description, qte, montant];
+// Normalise un nom de colonne : minuscules sans accents ni espaces ni point.
+function normalizeHeader(h: string): string {
+  return h
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\s  ]+/g, "")
+    .toLowerCase();
 }
 
-export function parseBourseDirectCsv(csvText: string, options: { support: Support }): ParsedRow[] {
+type ColumnMap = {
+  date: number;
+  quoi: number;
+  isin: number;
+  description: number;
+  quantite: number;
+  montant: number;
+  commission: number | null;
+  count: number;
+};
+
+function detectColumns(headerLine: string): ColumnMap {
+  const cells = splitCsvLine(headerLine).map(normalizeHeader);
+  const idx = (...names: string[]) => {
+    for (const n of names) {
+      const i = cells.indexOf(n);
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+
+  const date = idx("date");
+  const quoi = idx("quoi", "type", "operation");
+  const isin = idx("isin");
+  const description = idx("description", "libelle");
+  const quantite = idx("quantite", "qte");
+  const montant = idx("montant");
+  const commission = idx("commission", "frais", "courtage");
+
+  return {
+    date,
+    quoi,
+    isin,
+    description,
+    quantite,
+    montant,
+    commission: commission === -1 ? null : commission,
+    count: cells.length,
+  };
+}
+
+// Si une description non-quotée contient une virgule, splitCsvLine retourne
+// plus de colonnes que prévu. On recolle alors les colonnes du milieu
+// (positions description..N-trailing) dans la description.
+function normalizeFields(fields: string[], cols: ColumnMap): string[] {
+  if (fields.length <= cols.count) return fields;
+  const head = fields.slice(0, cols.description);
+  const tail = fields.slice(fields.length - (cols.count - cols.description - 1));
+  const middle = fields
+    .slice(cols.description, fields.length - (cols.count - cols.description - 1))
+    .join(",");
+  return [...head, middle, ...tail];
+}
+
+export function parseBourseDirectCsv(
+  csvText: string,
+  options: { support: Support },
+): FileParseResult {
   const lines = csvText.replace(/\r\n/g, "\n").split("\n");
   const out: ParsedRow[] = [];
+  const warnings: string[] = [];
 
-  for (let idx = 0; idx < lines.length; idx++) {
+  if (lines.length === 0) return { rows: out, warnings };
+
+  const cols = detectColumns(lines[0]!);
+  if (cols.date < 0 || cols.quoi < 0 || cols.isin < 0 || cols.montant < 0 || cols.quantite < 0) {
+    warnings.push("Header CSV non reconnu : colonnes Date / Quoi / ISIN / Quantité / Montant requises.");
+    return { rows: out, warnings };
+  }
+
+  let skippedOrphanCoupons = 0;
+
+  for (let idx = 1; idx < lines.length; idx++) {
     const raw = lines[idx]!;
     const rawLine = idx + 1;
-    if (idx === 0) continue; // header
     if (raw.trim() === "") continue;
 
-    const fields = normalizeFields(splitCsvLine(raw));
-    if (fields.length < 6) {
+    const fields = normalizeFields(splitCsvLine(raw), cols);
+    if (fields.length < cols.count) {
       out.push({
         rawLine,
         date: "",
@@ -137,13 +202,23 @@ export function parseBourseDirectCsv(csvText: string, options: { support: Suppor
       continue;
     }
 
-    const [dateRaw, quoiRaw, isinRaw, descRaw, qteRaw, montantRaw] = fields;
+    const dateRaw = fields[cols.date] ?? "";
+    const quoiRaw = fields[cols.quoi] ?? "";
+    const isinRaw = fields[cols.isin] ?? "";
+    const descRaw = fields[cols.description] ?? "";
+    const qteRaw = fields[cols.quantite] ?? "";
+    const montantRaw = fields[cols.montant] ?? "";
+    const commissionRaw = cols.commission != null ? (fields[cols.commission] ?? "") : "";
 
-    const date = parseDate(dateRaw!);
-    const kind = KIND_MAP[quoiRaw!.trim()];
-    const isin = isinRaw!.trim().toUpperCase() || null;
-    const description = descRaw!.trim();
-    const totalAmount = parseFr(montantRaw!);
+    const date = parseDate(dateRaw);
+    const quoiTrimmed = quoiRaw.trim();
+    const kind = KIND_MAP[quoiTrimmed];
+    const isin = isinRaw.trim().toUpperCase() || null;
+    const description = descRaw.trim();
+    const totalAmountSigned = parseFr(montantRaw);
+    const totalAmount = Math.abs(totalAmountSigned);
+    const commission = commissionRaw.trim() ? parseFr(commissionRaw) : NaN;
+    const hasCommission = Number.isFinite(commission) && commission > 0;
 
     if (!kind) {
       out.push({
@@ -190,6 +265,13 @@ export function parseBourseDirectCsv(csvText: string, options: { support: Suppor
       continue;
     }
 
+    // Coupons orphelins : pas d'ISIN identifiable ou description "??".
+    // On skip silencieusement et on agrège dans un warning.
+    if (kind === "dividend" && (!isin || description === "??" || description.includes("??"))) {
+      skippedOrphanCoupons += 1;
+      continue;
+    }
+
     if (kind === "dividend" || kind === "fee") {
       out.push({
         rawLine,
@@ -205,12 +287,60 @@ export function parseBourseDirectCsv(csvText: string, options: { support: Suppor
       continue;
     }
 
-    // buy / sell
+    // Liquidation : kind=sell, quantité à inférer côté import action.
+    if (quoiTrimmed === "Liquidation") {
+      if (!isin || !ISIN_RE.test(isin)) {
+        out.push({
+          rawLine,
+          date,
+          kind,
+          isin,
+          description,
+          quantity: null,
+          totalAmount,
+          needsAttention: true,
+          attentionReason: "Liquidation : ISIN manquant ou invalide",
+        });
+        continue;
+      }
+      // Pour une liquidation : pas de commission, gross = total.
+      const market = inferBourseDirectMarket(isin);
+      const emptyFees: FeeBreakdown = {
+        brokerage: 0,
+        ttf: 0,
+        total: 0,
+        rationale: "Liquidation (frais ignorés)",
+      };
+      out.push({
+        rawLine,
+        date,
+        kind,
+        isin,
+        description,
+        quantity: null,
+        totalAmount,
+        grossAmount: totalAmount,
+        // price calculé après inférence côté import action.
+        price: undefined,
+        computedFees: emptyFees,
+        needsAttention: false,
+        inferredMarket: market,
+        inferQtyFromHoldings: true,
+        notes: "Liquidation",
+      });
+      continue;
+    }
+
+    // buy / sell standard
     let quantity: number | null = null;
-    const qteStr = qteRaw!.trim();
+    const qteStr = qteRaw.trim();
     if (qteStr) {
       const q = parseFr(qteStr);
-      if (Number.isFinite(q) && q > 0) quantity = q;
+      if (Number.isFinite(q)) {
+        // Quantités peuvent être signées dans la nouvelle version ; on prend la valeur absolue.
+        const absQ = Math.abs(q);
+        if (absQ > 0) quantity = absQ;
+      }
     }
     if (quantity == null) quantity = extractQuantityFromDescription(description);
 
@@ -246,12 +376,53 @@ export function parseBourseDirectCsv(csvText: string, options: { support: Suppor
 
     const market = inferBourseDirectMarket(isin);
     const isFREquity = isin.startsWith("FR");
-    const { grossAmount, fees } = solveBourseDirectGrossFromTotal(totalAmount, {
-      market,
-      support: options.support,
-      isFREquity,
-      isBuy: kind === "buy",
-    });
+
+    let grossAmount: number;
+    let fees: FeeBreakdown;
+    if (hasCommission) {
+      // Commission lue directement dans le CSV. Le brut pur = |Montant| − Commission.
+      // (Pour un achat, Montant = brut + commission ; pour une vente, Montant
+      // = brut − commission. Dans les deux cas, |Montant - brut| = commission,
+      // donc brut = |Montant| − commission côté achat, brut = |Montant| + commission
+      // côté vente. On modélise comme : brut = |Montant| − commission pour la vue
+      // capital + price ; les valeurs négatives sont impossibles ici car le CSV
+      // BD donne déjà un Montant cohérent.)
+      const isBuy = kind === "buy";
+      const computedGross = isBuy ? totalAmount - commission : totalAmount + commission;
+      grossAmount = Math.round(computedGross * 100) / 100;
+      fees = {
+        brokerage: Math.round(commission * 100) / 100,
+        ttf: 0,
+        total: Math.round(commission * 100) / 100,
+        rationale: `Commission CSV ${commission.toFixed(2)} €`,
+      };
+      // Si le profil a un barème (TTF FR), le re-calculer puis prendre la TTF
+      // pour la vue tax (et garder la commission CSV pour la brokerage).
+      if (isBuy && isFREquity) {
+        const computed = computeBourseDirectFees(grossAmount, {
+          market,
+          support: options.support,
+          isFREquity,
+          isBuy,
+        });
+        fees = {
+          brokerage: Math.round(commission * 100) / 100,
+          ttf: computed.ttf,
+          total: Math.round((commission + computed.ttf) * 100) / 100,
+          rationale: `Commission CSV ${commission.toFixed(2)} € + TTF ${computed.ttf.toFixed(2)} €`,
+        };
+      }
+    } else {
+      // Fallback : résolution du brut via le barème (ancien comportement).
+      const solved = solveBourseDirectGrossFromTotal(totalAmount, {
+        market,
+        support: options.support,
+        isFREquity,
+        isBuy: kind === "buy",
+      });
+      grossAmount = solved.grossAmount;
+      fees = solved.fees;
+    }
 
     const price = quantity > 0 ? Math.round((grossAmount / quantity) * 10000) / 10000 : undefined;
 
@@ -271,5 +442,11 @@ export function parseBourseDirectCsv(csvText: string, options: { support: Suppor
     });
   }
 
-  return out;
+  if (skippedOrphanCoupons > 0) {
+    warnings.push(
+      `${skippedOrphanCoupons} coupon${skippedOrphanCoupons > 1 ? "s" : ""} ignoré${skippedOrphanCoupons > 1 ? "s" : ""} faute d'ISIN identifiable.`,
+    );
+  }
+
+  return { rows: out, warnings };
 }

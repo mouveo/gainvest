@@ -21,6 +21,11 @@ export type ActivePosition = {
   qty: number;
   pru: number;
   invested: number;
+  // Pédagogique : PRU "brut" (hors frais capitalisés). Comparer au cours
+  // sans biais lié aux frais.
+  pruGross: number;
+  investedGross: number;
+  pnlCapitalGross: number;
   currentPrice: number;
   valuation: number;
   totalCost: number;
@@ -127,6 +132,9 @@ type LineState = {
   currency: string;
   qty: number;
   totalCost: number;
+  // Gross cost = Σ qty × price (excludes fees). Trimmed proportionally on
+  // sells, just like totalCost. Surfaces a "PRU brut" view.
+  totalCostGross: number;
   divPerShareCumul: number;
   divPerShareEntryAvg: number;
   activeBuyFlows: Flow[];
@@ -166,6 +174,7 @@ export function replayTransactions(
         currency: o.currency,
         qty: 0,
         totalCost: 0,
+        totalCostGross: 0,
         divPerShareCumul: 0,
         divPerShareEntryAvg: 0,
         activeBuyFlows: [],
@@ -193,12 +202,14 @@ export function replayTransactions(
       const qtyBefore = line.qty;
       const qtyAdded = o.quantity;
       const cost = o.grossAmount + (o.fees ?? 0);
+      const grossLeg = qtyAdded * o.price;
       const newQty = qtyBefore + qtyAdded;
       line.divPerShareEntryAvg =
         newQty > 0
           ? (line.divPerShareEntryAvg * qtyBefore + line.divPerShareCumul * qtyAdded) / newQty
           : line.divPerShareEntryAvg;
       line.totalCost += cost;
+      line.totalCostGross += grossLeg;
       line.qty = newQty;
       line.activeBuyFlows.push({ date: o.tradeDate, amount: -cost });
       line.totalFees += o.fees ?? 0;
@@ -290,7 +301,9 @@ export function replayTransactions(
       line.realizations.push(realization);
 
       // CUMP: trim cost and qty by the prorata; PRU on the remaining lot is unchanged.
+      const costBasisGross = qtyBefore > 0 ? (line.totalCostGross / qtyBefore) * cappedQty : 0;
       line.totalCost -= costBasis;
+      line.totalCostGross -= costBasisGross;
       line.qty -= cappedQty;
       line.activeBuyFlows = buySplit.remaining;
       line.activeDividendFlows = divSplit.remaining;
@@ -346,6 +359,8 @@ export function replayTransactions(
     const currentPrice = priceByIsin[line.isin] ?? 0;
     const pru = line.totalCost / line.qty;
     const invested = line.qty * pru;
+    const pruGross = line.totalCostGross / line.qty;
+    const investedGross = line.qty * pruGross;
     const valuation = line.qty * currentPrice;
     const dividendsAttributed = sumFlows(line.activeDividendFlows);
 
@@ -371,6 +386,7 @@ export function replayTransactions(
     ];
 
     const pnlCapital = valuation - invested;
+    const pnlCapitalGross = valuation - investedGross;
     const pnlTotal = valuation + dividendsAttributed - invested;
     const pnlPctCapital = invested > 0 ? pnlCapital / invested : 0;
     const pnlPctTotal = invested > 0 ? pnlTotal / invested : 0;
@@ -389,6 +405,9 @@ export function replayTransactions(
       qty: line.qty,
       pru,
       invested,
+      pruGross,
+      investedGross,
+      pnlCapitalGross,
       currentPrice,
       valuation,
       totalCost: line.totalCost,

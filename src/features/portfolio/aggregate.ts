@@ -48,6 +48,10 @@ export type Position = {
   currency: string;
   qty: number;
   pru: number;
+  // Brut hors frais (vue pédagogique). Conversion 1:1 depuis ActivePosition.
+  pruGross: number;
+  investedGross: number;
+  pnlCapitalGross: number;
   currentPrice: number;
   valuation: number;
   invested: number;
@@ -96,6 +100,9 @@ function activeToPosition(p: ActivePosition): Position {
     currency: p.currency,
     qty: p.qty,
     pru: p.pru,
+    pruGross: p.pruGross,
+    investedGross: p.investedGross,
+    pnlCapitalGross: p.pnlCapitalGross,
     currentPrice: p.currentPrice,
     valuation: p.valuation,
     invested: p.invested,

@@ -49,7 +49,13 @@ export type ParsedRow = {
   currency?: string;
   fees?: number;
   broker?: string;
+  notes?: string | null;
+  // Liquidation rows (BD) do not carry a quantity in the CSV — the import
+  // action infers it from the user's stock at the row's date.
+  inferQtyFromHoldings?: boolean;
 };
+
+export type FileParseResult = { rows: ParsedRow[]; warnings: string[] };
 
 export type FeeCalculatorArgs = {
   market: Market;
@@ -61,7 +67,10 @@ export type FeeCalculatorArgs = {
 export type BrokerProfile = {
   id: string;
   name: string;
-  fileParser: (fileText: string, options: { support: Support }) => ParsedRow[];
+  fileParser: (
+    fileText: string,
+    options: { support: Support },
+  ) => ParsedRow[] | FileParseResult;
   feeCalculator?: (grossAmount: number, args: FeeCalculatorArgs) => FeeBreakdown;
   inferMarket?: (isin: string) => Market;
 };

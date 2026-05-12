@@ -109,6 +109,33 @@ export async function deleteOrder(id: string): Promise<void> {
   revalidatePath("/portfolio");
 }
 
+export async function deleteTransactionsByBroker(
+  brokerName: string,
+): Promise<{ deleted: number } | { ok: false; error: string }> {
+  if (!brokerName || brokerName.length > 200) {
+    return { ok: false, error: "Nom de courtier invalide." };
+  }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Non authentifié." };
+
+  // RLS already restricts deletions to the caller's own rows, but we filter
+  // explicitly on user_id to keep the intent visible at the call site.
+  const { data, error } = await supabase
+    .from("transactions")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("broker", brokerName)
+    .select("id");
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/portfolio");
+  return { deleted: data?.length ?? 0 };
+}
+
 export async function updateInstrumentPrice(isin: string, price: number): Promise<void> {
   if (!Number.isFinite(price) || price < 0) return;
   const supabase = await createClient();

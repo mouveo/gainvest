@@ -16,6 +16,7 @@ export type ImportResult =
       inserted: number;
       skipped: number;
       failed: { row: number; reason: string }[];
+      warnings: string[];
     }
   | { ok: false; error: string };
 
@@ -46,11 +47,14 @@ export async function importBrokerOrders(
   brokerId: string,
   support: Support,
   rows: ParsedRow[],
+  warnings: string[] = [],
 ): Promise<ImportResult> {
   const brokerProfile = getBroker(brokerId);
   if (!brokerProfile) return { ok: false, error: "Courtier inconnu." };
   if (!SUPPORTS.includes(support)) return { ok: false, error: "Support invalide." };
-  if (rows.length === 0) return { ok: true, inserted: 0, skipped: 0, failed: [] };
+  if (rows.length === 0) {
+    return { ok: true, inserted: 0, skipped: 0, failed: [], warnings };
+  }
 
   const supabase = await createClient();
   const {
@@ -61,9 +65,98 @@ export async function importBrokerOrders(
   const accountId = await getDefaultAccountId();
 
   const failed: { row: number; reason: string }[] = [];
+
+  // Sort rows chronologically (and place liquidations last on same day) so that
+  // the per-isin stock used to infer liquidation quantities reflects every
+  // buy/sell that took place earlier in the same batch.
+  const workingRows: ParsedRow[] = rows.slice().sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    const aLiq = a.inferQtyFromHoldings ? 1 : 0;
+    const bLiq = b.inferQtyFromHoldings ? 1 : 0;
+    return aLiq - bLiq;
+  });
+
+  // Infer liquidation quantities by replaying the user's history for the
+  // affected (isin, support) lines.
+  type StockEntry = { date: string; signedQty: number };
+  const stockByKey = new Map<string, StockEntry[]>();
+  const liqIsins = Array.from(
+    new Set(
+      workingRows
+        .filter((r) => r.inferQtyFromHoldings && r.isin)
+        .map((r) => r.isin as string),
+    ),
+  );
+
+  if (liqIsins.length > 0) {
+    const { data: instData, error: instErr } = await supabase
+      .from("instruments")
+      .select("id, isin")
+      .in("isin", liqIsins);
+    if (instErr) return { ok: false, error: instErr.message };
+    const instIdToIsin = new Map<string, string>();
+    for (const inst of instData ?? []) {
+      if (inst.id && inst.isin) instIdToIsin.set(inst.id, inst.isin);
+    }
+    const instIds = Array.from(instIdToIsin.keys());
+    if (instIds.length > 0) {
+      const { data: priorTx, error: priorErr } = await supabase
+        .from("transactions")
+        .select("kind, quantity, trade_date, support, instrument_id")
+        .eq("user_id", user.id)
+        .eq("support", support)
+        .in("kind", ["buy", "sell"])
+        .in("instrument_id", instIds);
+      if (priorErr) return { ok: false, error: priorErr.message };
+      for (const t of priorTx ?? []) {
+        if (!t.instrument_id || t.quantity == null) continue;
+        const isin = instIdToIsin.get(t.instrument_id);
+        if (!isin) continue;
+        const key = `${isin}::${t.support}`;
+        const sign = t.kind === "buy" ? 1 : -1;
+        const arr = stockByKey.get(key) ?? [];
+        arr.push({ date: t.trade_date, signedQty: sign * Number(t.quantity) });
+        stockByKey.set(key, arr);
+      }
+    }
+  }
+
+  // Same-batch contributions (other buy/sell rows that precede the liquidation).
+  const batchContribs = new Map<string, StockEntry[]>();
+  for (const r of workingRows) {
+    if (r.inferQtyFromHoldings) continue;
+    if (r.kind !== "buy" && r.kind !== "sell") continue;
+    if (!r.isin || r.quantity == null || r.quantity <= 0) continue;
+    const key = `${r.isin}::${support}`;
+    const arr = batchContribs.get(key) ?? [];
+    arr.push({ date: r.date, signedQty: r.kind === "buy" ? r.quantity : -r.quantity });
+    batchContribs.set(key, arr);
+  }
+
+  for (const r of workingRows) {
+    if (!r.inferQtyFromHoldings || !r.isin) continue;
+    const key = `${r.isin}::${support}`;
+    let stock = 0;
+    for (const e of stockByKey.get(key) ?? []) {
+      if (e.date <= r.date) stock += e.signedQty;
+    }
+    for (const e of batchContribs.get(key) ?? []) {
+      if (e.date <= r.date) stock += e.signedQty;
+    }
+    if (stock > 0) {
+      r.quantity = stock;
+      const gross = r.grossAmount ?? r.totalAmount;
+      r.price = Math.round((gross / stock) * 10000) / 10000;
+      r.inferQtyFromHoldings = false;
+    } else {
+      r.needsAttention = true;
+      r.attentionReason = "Quantité de liquidation introuvable (stock nul à la date)";
+    }
+  }
+
   const valid: ParsedRow[] = [];
 
-  for (const row of rows) {
+  for (const row of workingRows) {
     if (row.needsAttention) {
       failed.push({
         row: row.rawLine,
@@ -230,7 +323,7 @@ export async function importBrokerOrders(
     }
 
     const currency = row.currency ?? (row.kind === "fee" ? "EUR" : instrumentCurrency);
-    const notes = row.kind === "fee" ? row.description : null;
+    const notes = row.notes ?? (row.kind === "fee" ? row.description : null);
 
     toInsert.push({
       user_id: user.id,
@@ -258,5 +351,5 @@ export async function importBrokerOrders(
   }
 
   revalidatePath("/portfolio");
-  return { ok: true, inserted: toInsert.length, skipped, failed };
+  return { ok: true, inserted: toInsert.length, skipped, failed, warnings };
 }
