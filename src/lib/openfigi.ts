@@ -30,6 +30,13 @@ const FIGI_TO_CLASS: Record<string, IsinLookup["assetClass"]> = {
   Bond: "bond",
   Note: "bond",
   Bill: "bond",
+  // OpenFIGI exposes bond market sectors via securityType2 — without these
+  // mappings, "Corp"/"Govt"/"Muni"/"Mtge" fall through to "equity" (wrong).
+  Corp: "bond",
+  Govt: "bond",
+  Muni: "bond",
+  Mtge: "bond",
+  Mort: "bond",
 };
 
 const EXCH_TO_CURRENCY: Record<string, string> = {
@@ -98,11 +105,17 @@ export async function lookupIsin(isin: string): Promise<IsinLookup | null> {
   const record = first.data[0];
   if (!record) return null;
 
-  const name = record.name ?? record.securityDescription;
-  if (!name) return null;
-
   const figiType = record.securityType2 ?? record.securityType ?? "";
   const assetClass = FIGI_TO_CLASS[figiType] ?? "equity";
+
+  // For bonds, `name` is the issuer (e.g. "AMAZON.COM INC") while
+  // `securityDescription` is the specific bond ("AMZN 4.65 11/20/35").
+  // Prefer the bond identifier for bonds; the issuer for everything else.
+  const name =
+    assetClass === "bond"
+      ? (record.securityDescription ?? record.name)
+      : (record.name ?? record.securityDescription);
+  if (!name) return null;
 
   const currency =
     (record.exchCode ? EXCH_TO_CURRENCY[record.exchCode] : undefined) ??

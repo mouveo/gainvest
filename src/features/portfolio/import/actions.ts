@@ -249,12 +249,19 @@ export async function importBrokerOrders(
     if (!meta) continue;
     const patch: {
       asset_class?: AssetClass;
+      name?: string;
       bond_coupon_rate?: number;
       bond_maturity_date?: string;
       bond_coupon_frequency?: number;
     } = {};
     if (meta.assetClass && meta.assetClass !== cached.asset_class) {
       patch.asset_class = meta.assetClass;
+      // When a row flips to "bond", also refresh its name with the broker's
+      // bond-specific label (e.g. "AMZN 4.65 11/20/35") so the UI stops
+      // showing the issuer alias inherited from OpenFIGI.
+      if (meta.assetClass === "bond" && meta.name) {
+        patch.name = meta.name;
+      }
     }
     if (meta.bondMetadata) {
       if (cached.bond_coupon_rate == null) {
@@ -282,48 +289,38 @@ export async function importBrokerOrders(
 
   for (const isin of isins) {
     if (byIsin.has(isin)) continue;
-    const meta = await lookupIsin(isin);
-    let insertPayload: {
+    const openfigi = await lookupIsin(isin);
+    const broker = brokerMetaByIsin.get(isin) ?? null;
+    if (!openfigi && !(broker?.name && broker.assetClass && broker.currency)) continue;
+
+    // Merge with broker precedence on assetClass + bond-specific name. IBKR
+    // gives us `assetCategory="BOND"` and the bond symbol directly, which is
+    // strictly more authoritative than OpenFIGI's market-sector heuristic.
+    const assetClass: AssetClass = broker?.assetClass ?? openfigi?.assetClass ?? "equity";
+    const name: string =
+      assetClass === "bond"
+        ? (broker?.name ?? openfigi?.name ?? isin)
+        : (openfigi?.name ?? broker?.name ?? isin);
+    const currency: string = openfigi?.currency ?? broker?.currency ?? "EUR";
+    const country: string = openfigi?.country ?? isin.slice(0, 2);
+    const symbol: string = broker?.symbol ?? isin;
+
+    const insertPayload: {
       isin: string;
       symbol: string;
       name: string;
       asset_class: AssetClass;
       currency: string;
-      country: string | null;
+      country: string;
       bond_coupon_rate?: number;
       bond_maturity_date?: string;
       bond_coupon_frequency?: number;
-    } | null = null;
-    if (meta) {
-      insertPayload = {
-        isin,
-        symbol: isin,
-        name: meta.name,
-        asset_class: meta.assetClass,
-        currency: meta.currency,
-        country: meta.country,
-      };
-    } else {
-      // OpenFIGI miss — fall back to broker-side metadata so an IBKR buy/sell
-      // for an unindexed ISIN (typical bond case) still gets imported.
-      const broker = brokerMetaByIsin.get(isin);
-      if (broker?.name && broker.assetClass && broker.currency) {
-        insertPayload = {
-          isin,
-          symbol: broker.symbol ?? isin,
-          name: broker.name,
-          asset_class: broker.assetClass,
-          currency: broker.currency,
-          country: isin.slice(0, 2),
-        };
-      }
-    }
-    if (!insertPayload) continue;
-    const brokerMeta = brokerMetaByIsin.get(isin);
-    if (insertPayload.asset_class === "bond" && brokerMeta?.bondMetadata) {
-      insertPayload.bond_coupon_rate = brokerMeta.bondMetadata.couponRate;
-      insertPayload.bond_maturity_date = brokerMeta.bondMetadata.maturityDate;
-      insertPayload.bond_coupon_frequency = brokerMeta.bondMetadata.frequency;
+    } = { isin, symbol, name, asset_class: assetClass, currency, country };
+
+    if (assetClass === "bond" && broker?.bondMetadata) {
+      insertPayload.bond_coupon_rate = broker.bondMetadata.couponRate;
+      insertPayload.bond_maturity_date = broker.bondMetadata.maturityDate;
+      insertPayload.bond_coupon_frequency = broker.bondMetadata.frequency;
     }
     const { data: upserted, error: upsertErr } = await supabase
       .from("instruments")
