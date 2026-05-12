@@ -55,6 +55,7 @@ type PositionColKey =
   | "invested"
   | "valuation"
   | "dividendsAttributed"
+  | "divYieldAnnualized"
   | "holdingFees"
   | "pnl"
   | "pnlTotal"
@@ -77,6 +78,7 @@ const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
   { key: "dividendsAttributed", label: "Dividendes", num: true, defaultVisible: false },
+  { key: "divYieldAnnualized", label: "Rendement divs", num: true, defaultVisible: true },
   { key: "holdingFees", label: "Frais de détention", num: true, defaultVisible: false },
   { key: "pnl", label: "PnL", num: true, defaultVisible: true },
   { key: "pnlTotal", label: "PnL total", num: true, defaultVisible: false },
@@ -340,6 +342,32 @@ export function PositionsTable({
           return (
             <div className="text-right font-mono tabular-nums">
               {v > 0.005 ? fmtCcy(v, 0) : "—"}
+            </div>
+          );
+        },
+      },
+      {
+        id: "divYieldAnnualized",
+        accessorFn: (p) => p.divYieldAnnualized ?? Number.NaN,
+        sortingFn: (a, b, columnId) => {
+          const av = a.getValue<number>(columnId);
+          const bv = b.getValue<number>(columnId);
+          const af = Number.isFinite(av);
+          const bf = Number.isFinite(bv);
+          if (!af && !bf) return 0;
+          if (!af) return 1;
+          if (!bf) return -1;
+          return av - bv;
+        },
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Rendement divs" align="right" />
+        ),
+        cell: ({ row }) => {
+          const v = row.original.divYieldAnnualized;
+          if (v == null || !Number.isFinite(v)) return DashCell;
+          return (
+            <div className="text-right">
+              <DeltaPill value={v} />
             </div>
           );
         },

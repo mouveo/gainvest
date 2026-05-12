@@ -48,6 +48,10 @@ export type ActivePosition = {
   pnlTotal: number;
   pnlPctCapital: number;
   pnlPctTotal: number;
+  // Rendement annualisé issu des seuls dividendes / intérêts encaissés :
+  // (dividendes_attribués / années_détention) / capital_investi. Null quand
+  // pas de divs reçus ou fenêtre < 18 jours (annualisation trop bruitée).
+  divYieldAnnualized: number | null;
   xirrCapital: number;
   xirrTotal: number;
   cashFlowsCapital: Flow[];
@@ -636,6 +640,10 @@ export function replayTransactions(
     const firstBuyDate = new Date(`${line.firstBuyDate}T00:00:00`);
     const days = Math.max(1, (today.getTime() - firstBuyDate.getTime()) / 86_400_000);
     const yearsHeld = days / 365.25;
+    const divYieldAnnualized =
+      invested > 0 && yearsHeld > 0.05 && dividendsAttributed > 0
+        ? dividendsAttributed / yearsHeld / invested
+        : null;
 
     positions.push({
       key: line.key,
@@ -665,6 +673,7 @@ export function replayTransactions(
       pnlTotal,
       pnlPctCapital,
       pnlPctTotal,
+      divYieldAnnualized,
       xirrCapital: xirr(cashFlowsCapital),
       xirrTotal: xirr(cashFlowsTotal),
       cashFlowsCapital,
@@ -740,6 +749,9 @@ export function replayTransactions(
       pnlTotal: pnlTotalCash,
       pnlPctCapital: 0,
       pnlPctTotal: 0,
+      // Yield divs ne s'applique pas au cash : le XIRR cash (xirrCapital
+      // ci-dessous) capte déjà le rendement intérêts au taux annualisé.
+      divYieldAnnualized: null,
       xirrCapital: yieldXirr,
       xirrTotal: yieldXirr,
       cashFlowsCapital: flowsForXirr,

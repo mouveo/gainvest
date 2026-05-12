@@ -140,6 +140,9 @@ export type Position = {
   pnlTotal: number;
   pnlPctCapital: number;
   pnlPctTotal: number;
+  // Rendement annualisé issu des seuls dividendes/coupons reçus (= "yield on
+  // cost"). Null quand divs nuls ou fenêtre < 18 jours. Voir realize.ts.
+  divYieldAnnualized: number | null;
   xirrCapital: number;
   xirrTotal: number;
   cashFlowsCapital: Flow[];
@@ -199,6 +202,7 @@ function activeToPosition(p: ActivePosition): Position {
     pnlTotal: p.pnlTotal,
     pnlPctCapital: p.pnlPctCapital,
     pnlPctTotal: p.pnlPctTotal,
+    divYieldAnnualized: p.divYieldAnnualized,
     xirrCapital: p.xirrCapital,
     xirrTotal: p.xirrTotal,
     cashFlowsCapital: p.cashFlowsCapital,

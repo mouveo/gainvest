@@ -50,6 +50,7 @@ function pos(overrides: Partial<Position> = {}): Position {
     pnlTotal: 100,
     pnlPctCapital: 0.1,
     pnlPctTotal: 0.1,
+    divYieldAnnualized: null,
     xirrCapital: 0.05,
     xirrTotal: 0.05,
     cashFlowsCapital: [],
