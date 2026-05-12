@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-import type { OrderRow, PortfolioTotals, Position } from "../aggregate";
+import {
+  computeMovementTotals,
+  computeRealizationTotals,
+  computeTotals,
+  type OrderRow,
+  type Position,
+} from "../aggregate";
 import type { PastRealization } from "../realize";
 import { AddOrderSheet } from "./add-order-sheet";
 import { AutoRefreshPrices } from "./auto-refresh-prices";
@@ -24,7 +30,6 @@ type Props = {
   orders: OrderRow[];
   realizations: PastRealization[];
   priceByIsin: Record<string, number>;
-  totals: PortfolioTotals;
   pricesUpdatedAt: string | null;
 };
 
@@ -33,13 +38,35 @@ export function PortfolioShell({
   orders,
   realizations,
   priceByIsin,
-  totals,
   pricesUpdatedAt,
 }: Props) {
   const [tab, setTab] = useState<Tab>("positions");
   const [withDividends, setWithDividends] = usePnlMode();
   const [netOfFees, setNetOfFees] = useNetOfFeesMode();
   const knownIsins = positions.map((p) => ({ isin: p.isin, name: p.instrumentName }));
+
+  const [visiblePositions, setVisiblePositions] = useState(positions);
+  const [visibleRealizations, setVisibleRealizations] = useState(realizations);
+  const [visibleOrders, setVisibleOrders] = useState(orders);
+
+  useEffect(() => setVisiblePositions(positions), [positions]);
+  useEffect(() => setVisibleRealizations(realizations), [realizations]);
+  useEffect(() => setVisibleOrders(orders), [orders]);
+
+  const visiblePositionTotals = useMemo(
+    () => computeTotals(visiblePositions),
+    [visiblePositions],
+  );
+
+  const visibleRealizationTotals = useMemo(
+    () => computeRealizationTotals(visibleRealizations),
+    [visibleRealizations],
+  );
+
+  const visibleMovementTotals = useMemo(
+    () => computeMovementTotals(visibleOrders),
+    [visibleOrders],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -58,57 +85,77 @@ export function PortfolioShell({
         </div>
       </div>
 
-      <div className="flex justify-end gap-4">
-        <PnlModeToggle value={withDividends} onChange={setWithDividends} />
-        <HoldingFeesToggle value={netOfFees} onChange={setNetOfFees} />
-      </div>
+      <Tabs value={tab} onValueChange={(v) => v && setTab(v as Tab)} className="gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="positions">
+              Positions
+              <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
+                {positions.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="realizations">
+              Détention passée
+              <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
+                {realizations.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="movements">
+              Mouvements
+              <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
+                {orders.length}
+              </span>
+            </TabsTrigger>
+          </TabsList>
 
-      <KpiStrip
-        view="positions"
-        totals={totals}
-        pricesUpdatedAt={pricesUpdatedAt}
-        withDividends={withDividends}
-        netOfFees={netOfFees}
-      />
+          <div className="flex items-center gap-4">
+            <PnlModeToggle value={withDividends} onChange={setWithDividends} />
+            <HoldingFeesToggle value={netOfFees} onChange={setNetOfFees} />
+          </div>
+        </div>
 
-      <Tabs value={tab} onValueChange={(v) => v && setTab(v as Tab)}>
-        <TabsList>
-          <TabsTrigger value="positions">
-            Positions
-            <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
-              {positions.length}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="realizations">
-            Détention passée
-            <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
-              {realizations.length}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="movements">
-            Mouvements
-            <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
-              {orders.length}
-            </span>
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="positions" className="pt-4">
+        {tab === "positions" && (
+          <KpiStrip
+            view="positions"
+            totals={visiblePositionTotals}
+            pricesUpdatedAt={pricesUpdatedAt}
+            withDividends={withDividends}
+            netOfFees={netOfFees}
+          />
+        )}
+
+        {tab === "realizations" && (
+          <KpiStrip
+            view="realizations"
+            totals={visibleRealizationTotals}
+            withDividends={withDividends}
+            netOfFees={netOfFees}
+          />
+        )}
+
+        {tab === "movements" && (
+          <KpiStrip view="movements" totals={visibleMovementTotals} />
+        )}
+
+        <TabsContent value="positions">
           <PositionsTable
             positions={positions}
             withDividends={withDividends}
             netOfFees={netOfFees}
+            onVisibleRowsChange={setVisiblePositions}
           />
         </TabsContent>
-        <TabsContent value="realizations" className="pt-4">
+        <TabsContent value="realizations">
           <RealizationsTable
             realizations={realizations}
             withDividends={withDividends}
             netOfFees={netOfFees}
             priceByIsin={priceByIsin}
+            onVisibleRowsChange={setVisibleRealizations}
           />
         </TabsContent>
-        <TabsContent value="movements" className="pt-4">
-          <MovementsTable orders={orders} />
+        <TabsContent value="movements">
+          <MovementsTable orders={orders} onVisibleRowsChange={setVisibleOrders} />
         </TabsContent>
       </Tabs>
     </div>

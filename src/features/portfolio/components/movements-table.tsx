@@ -78,7 +78,13 @@ function migrateOrdersVisibilityKey(): void {
   }
 }
 
-export function MovementsTable({ orders }: { orders: OrderRow[] }) {
+export function MovementsTable({
+  orders,
+  onVisibleRowsChange,
+}: {
+  orders: OrderRow[];
+  onVisibleRowsChange?: (rows: OrderRow[]) => void;
+}) {
   useState(() => {
     migrateOrdersVisibilityKey();
     return null;
@@ -273,6 +279,7 @@ export function MovementsTable({ orders }: { orders: OrderRow[] }) {
       storageKey="gainvest:datatable:movements:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "date", desc: true }] }}
+      onVisibleRowsChange={onVisibleRowsChange}
       emptyState={
         <div className="text-muted-foreground py-12 text-center text-sm">
           Aucun mouvement — ajoute-en un via <strong>+ Nouvel ordre</strong>.

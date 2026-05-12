@@ -1,5 +1,3 @@
-import "server-only";
-
 // Heuristic rules for the V0 attribution of "droits de garde" (foreign custody
 // fees) across active positions.
 //

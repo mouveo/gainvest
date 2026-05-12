@@ -81,11 +81,13 @@ export function RealizationsTable({
   withDividends,
   netOfFees,
   priceByIsin,
+  onVisibleRowsChange,
 }: {
   realizations: PastRealization[];
   withDividends: boolean;
   netOfFees: boolean;
   priceByIsin: Record<string, number>;
+  onVisibleRowsChange?: (rows: PastRealization[]) => void;
 }) {
   useState(() => {
     migrateRealizationsVisibilityKey();
@@ -363,6 +365,7 @@ export function RealizationsTable({
       storageKey="gainvest:datatable:realizations:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "saleDate", desc: true }] }}
+      onVisibleRowsChange={onVisibleRowsChange}
       toolbar={(table) => (
         <DataTableToolbar
           table={table}

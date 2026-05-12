@@ -94,10 +94,12 @@ export function PositionsTable({
   positions,
   withDividends = false,
   netOfFees = false,
+  onVisibleRowsChange,
 }: {
   positions: Position[];
   withDividends?: boolean;
   netOfFees?: boolean;
+  onVisibleRowsChange?: (rows: Position[]) => void;
 }) {
   useState(() => {
     migratePositionsVisibilityKey();
@@ -424,6 +426,7 @@ export function PositionsTable({
         />
       )}
       expandedRowRender={(p) => <OrdersSubrow position={p} />}
+      onVisibleRowsChange={onVisibleRowsChange}
     />
   );
 }
