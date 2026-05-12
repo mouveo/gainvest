@@ -122,7 +122,7 @@ export function ListingPicker({
         {label}
       </DialogTrigger>
       <DialogContent
-        className="max-w-2xl"
+        className="!w-[min(90vw,720px)] !max-w-none"
         onClick={(e) => e.stopPropagation()}
       >
         <DialogHeader>
