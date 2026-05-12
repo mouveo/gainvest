@@ -225,7 +225,9 @@ export function ImportSheet() {
               <Label htmlFor="broker">Courtier</Label>
               <Select value={brokerId} onValueChange={(v) => v && onBrokerChange(v)}>
                 <SelectTrigger id="broker">
-                  <SelectValue />
+                  <SelectValue>
+                    {(value: string) => brokers.find((b) => b.id === value)?.name ?? value}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {brokers.map((b) => (

@@ -246,7 +246,17 @@ function BondMetadataForm({
             onValueChange={(v) => setFrequency(v as "1" | "2" | "4")}
           >
             <SelectTrigger id="bond-frequency">
-              <SelectValue />
+              <SelectValue>
+                {(value: string) =>
+                  value === "1"
+                    ? "Annuel"
+                    : value === "2"
+                      ? "Semi-annuel"
+                      : value === "4"
+                        ? "Trimestriel"
+                        : value
+                }
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="1">Annuel</SelectItem>

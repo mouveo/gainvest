@@ -280,7 +280,11 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
             <Label htmlFor="mode">Type de mouvement</Label>
             <Select value={mode} onValueChange={(v) => v && setMode(v as Mode)}>
               <SelectTrigger id="mode">
-                <SelectValue />
+                <SelectValue>
+                  {(value: string) =>
+                    MODE_OPTIONS.find((m) => m.value === value)?.label ?? value
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {MODE_OPTIONS.map((m) => (
@@ -598,7 +602,11 @@ function TradableFields(props: TradableProps) {
           <Label htmlFor="asset_class">Classe d&apos;actif</Label>
           <Select value={props.assetClass} onValueChange={(v) => v && props.setAssetClass(v)}>
             <SelectTrigger id="asset_class">
-              <SelectValue />
+              <SelectValue>
+                {(value: string) =>
+                  ASSET_CLASSES.find((a) => a.value === value)?.label ?? value
+                }
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {ASSET_CLASSES.map((a) => (
