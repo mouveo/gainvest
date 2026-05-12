@@ -6,7 +6,7 @@ import { inferBourseDirectMarket, parseBourseDirectCsv } from "./parser";
 export const bourseDirectProfile: BrokerProfile = {
   id: "bourse-direct",
   name: "Bourse Direct",
-  csvParser: parseBourseDirectCsv,
+  fileParser: parseBourseDirectCsv,
   feeCalculator: computeBourseDirectFees,
   inferMarket: inferBourseDirectMarket,
 };
