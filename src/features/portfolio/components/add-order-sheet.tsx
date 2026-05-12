@@ -30,6 +30,8 @@ import { addOrder, setCashBalance } from "../actions";
 import { fmtCcy } from "../format";
 import { SUPPORTS, type Support } from "../types";
 
+import { OrderListingSelect, type SelectedListing } from "./order-listing-select";
+
 const BROKERS = [
   "Bourse Direct",
   "Saxo Banque",
@@ -114,6 +116,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
   const [broker, setBroker] = useState("Bourse Direct");
   const [support, setSupport] = useState<Support>("CTO");
   const [notes, setNotes] = useState("");
+  const [listing, setListing] = useState<SelectedListing>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -149,6 +152,17 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     const hit = knownIsins.find((k) => k.isin === isin);
     if (hit && !name) setName(hit.name);
   }, [isin, knownIsins, name, isTradable]);
+
+  // Drop the chosen listing if the ISIN goes invalid or the mode flips to cash.
+  useEffect(() => {
+    if (!isTradable) {
+      if (listing) setListing(null);
+      return;
+    }
+    if (!ISIN_RE.test(isin.trim().toUpperCase()) && listing) {
+      setListing(null);
+    }
+  }, [isin, isTradable, listing]);
 
   const runLookup = useCallback(
     async (raw: string) => {
@@ -204,6 +218,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     setBroker("Bourse Direct");
     setSupport("CTO");
     setNotes("");
+    setListing(null);
     setError(null);
     setInfo(null);
     setLookupError(null);
@@ -357,6 +372,8 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
               setAssetClass={setAssetClass}
               currency={currency}
               setCurrency={setCurrency}
+              listing={listing}
+              setListing={setListing}
             />
           ) : (
             <CashFields
@@ -435,6 +452,8 @@ type TradableProps = {
   setAssetClass: (v: string) => void;
   currency: string;
   setCurrency: (v: string) => void;
+  listing: SelectedListing;
+  setListing: (v: SelectedListing) => void;
 };
 
 function TradableFields(props: TradableProps) {
@@ -619,7 +638,26 @@ function TradableFields(props: TradableProps) {
           <input type="hidden" name="asset_class" value={props.assetClass} />
         </div>
       </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="preferred_listing">Cotation</Label>
+        <OrderListingSelect
+          isin={props.isin}
+          value={props.listing}
+          onChange={props.setListing}
+        />
+        <p className="text-muted-foreground text-xs">
+          Auto = on choisit la meilleure cotation pour toi au prochain refresh.
+        </p>
+      </div>
+
       <input type="hidden" name="currency" value={props.currency} />
+      <input type="hidden" name="preferred_mic" value={props.listing?.mic ?? ""} />
+      <input
+        type="hidden"
+        name="preferred_currency"
+        value={props.listing?.currency ?? ""}
+      />
     </>
   );
 }

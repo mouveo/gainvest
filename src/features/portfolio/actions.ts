@@ -59,6 +59,16 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const assetClass = String(formData.get("asset_class") ?? "etf");
   const currency = String(formData.get("currency") ?? "EUR").toUpperCase();
 
+  const preferredMicRaw = String(formData.get("preferred_mic") ?? "").trim().toUpperCase();
+  const preferredCurrencyRaw = String(formData.get("preferred_currency") ?? "")
+    .trim()
+    .toUpperCase();
+  // Only honour a fully-specified pair. Partial pairs are silently dropped —
+  // downstream quote resolution expects (mic, currency) to be set together.
+  const preferredMic = preferredMicRaw && preferredCurrencyRaw ? preferredMicRaw : null;
+  const preferredCurrency =
+    preferredMicRaw && preferredCurrencyRaw ? preferredCurrencyRaw : null;
+
   const quantity = parseDec(formData.get("quantity"));
   const price = parseDec(formData.get("price"));
   const grossAmount = parseDec(formData.get("gross_amount")) || quantity * price;
@@ -106,23 +116,65 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
 
   let instrumentId: string | null = null;
   if (!isCashKind) {
-    const { data: instrument, error: instErr } = await supabase
+    // Find the existing catalog row keyed on (symbol = isin, mic IS NULL).
+    // We deliberately avoid upsert on `symbol,mic` here: an upsert that
+    // includes `preferred_mic` would overwrite a user's previously locked
+    // listing — a strict no-no per the LOT plan.
+    const { data: existing, error: existErr } = await supabase
       .from("instruments")
-      .upsert(
-        {
-          isin,
-          symbol: isin,
-          name,
-          asset_class: assetClass,
-          currency,
-        },
-        { onConflict: "symbol,mic" },
-      )
-      .select("id")
-      .single();
+      .select("id, preferred_mic, preferred_currency")
+      .eq("symbol", isin)
+      .is("mic", null)
+      .maybeSingle();
+    if (existErr) return { ok: false, error: existErr.message };
 
-    if (instErr) return { ok: false, error: instErr.message };
-    instrumentId = instrument.id;
+    if (existing) {
+      instrumentId = existing.id;
+      // Only fill the preferred listing when the cached row has none yet
+      // AND the form supplied a complete pair.
+      if (
+        preferredMic &&
+        preferredCurrency &&
+        existing.preferred_mic == null &&
+        existing.preferred_currency == null
+      ) {
+        const { error: updErr } = await supabase
+          .from("instruments")
+          .update({
+            preferred_mic: preferredMic,
+            preferred_currency: preferredCurrency,
+          })
+          .eq("id", existing.id);
+        if (updErr) return { ok: false, error: updErr.message };
+      }
+    } else {
+      const insertPayload: {
+        isin: string;
+        symbol: string;
+        name: string;
+        asset_class: string;
+        currency: string;
+        preferred_mic?: string;
+        preferred_currency?: string;
+      } = {
+        isin,
+        symbol: isin,
+        name,
+        asset_class: assetClass,
+        currency,
+      };
+      if (preferredMic && preferredCurrency) {
+        insertPayload.preferred_mic = preferredMic;
+        insertPayload.preferred_currency = preferredCurrency;
+      }
+      const { data: inserted, error: instErr } = await supabase
+        .from("instruments")
+        .insert(insertPayload)
+        .select("id")
+        .single();
+      if (instErr) return { ok: false, error: instErr.message };
+      instrumentId = inserted.id;
+    }
   }
 
   const { error: insertErr } = await supabase.from("transactions").insert({
