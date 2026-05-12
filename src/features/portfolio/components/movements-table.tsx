@@ -19,17 +19,39 @@ import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
 import { SupportTag } from "./support-tag";
 
-const KIND_BADGE: Record<"buy" | "sell" | "dividend" | "fee", { label: string; cls: string }> = {
+const KIND_BADGE: Record<OrderRow["kind"], { label: string; cls: string }> = {
   buy: { label: "Achat", cls: "border-success/30 bg-success/10 text-success" },
   sell: { label: "Vente", cls: "border-danger/30 bg-danger/10 text-danger" },
   dividend: {
     label: "Coupon",
     cls: "border-blue-300/40 bg-blue-50 text-blue-700 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300",
   },
+  interest: {
+    label: "Intérêt",
+    cls: "border-blue-300/40 bg-blue-50 text-blue-700 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300",
+  },
   fee: { label: "Frais", cls: "border-warning/30 bg-warning/10 text-warning" },
+  tax: { label: "Taxe", cls: "border-warning/30 bg-warning/10 text-warning" },
+  deposit: {
+    label: "Dépôt",
+    cls: "border-success/30 bg-success/10 text-success",
+  },
+  withdrawal: {
+    label: "Retrait",
+    cls: "border-danger/30 bg-danger/10 text-danger",
+  },
 };
 
-const MOVEMENT_KINDS = ["buy", "sell", "dividend", "fee"] as const;
+const MOVEMENT_KINDS = [
+  "buy",
+  "sell",
+  "dividend",
+  "interest",
+  "fee",
+  "tax",
+  "deposit",
+  "withdrawal",
+] as const;
 
 type MovementColKey =
   | "date"

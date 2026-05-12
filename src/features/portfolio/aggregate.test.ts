@@ -27,6 +27,7 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     price: 100,
     grossAmount: 1000,
     fees: 0,
+    fxRate: 1,
     notes: null,
     executionVenue: null,
     broker: null,
@@ -430,6 +431,96 @@ describe("aggregate", () => {
     expect(totals.dividendsReceived).toBeCloseTo(50, 8);
     // 5 + 2 (buy fees) + 4 (sell fees) + 12 (fee row grossAmount). Dividend fees ignored.
     expect(totals.feesPaid).toBeCloseTo(23, 8);
+    expect(totals.depositsTotal).toBe(0);
+    expect(totals.withdrawalsTotal).toBe(0);
+    expect(totals.interestReceived).toBe(0);
+    expect(totals.taxesPaid).toBe(0);
+  });
+
+  it("computeMovementTotals tallies cash kinds (deposit/withdrawal/interest/tax)", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 10_000,
+        quantity: null,
+        price: null,
+      }),
+      makeOrder({
+        id: "wd",
+        kind: "withdrawal",
+        grossAmount: 1_500,
+        quantity: null,
+        price: null,
+      }),
+      makeOrder({
+        id: "int",
+        kind: "interest",
+        grossAmount: 12,
+        quantity: null,
+        price: null,
+      }),
+      makeOrder({
+        id: "tax",
+        kind: "tax",
+        grossAmount: 1.8,
+        quantity: null,
+        price: null,
+      }),
+    ];
+
+    const totals = computeMovementTotals(orders);
+    expect(totals.depositsTotal).toBeCloseTo(10_000, 8);
+    expect(totals.withdrawalsTotal).toBeCloseTo(1_500, 8);
+    expect(totals.interestReceived).toBeCloseTo(12, 8);
+    expect(totals.taxesPaid).toBeCloseTo(1.8, 8);
+  });
+
+  it("computeMovementTotals projects native amounts to EUR via fxRate", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "buy-usd",
+        kind: "buy",
+        currency: "USD",
+        fxRate: 0.9,
+        grossAmount: 1000,
+        fees: 5,
+      }),
+    ];
+    const totals = computeMovementTotals(orders);
+    // 1000 USD * 0.9 = 900 EUR
+    expect(totals.totalBuys).toBeCloseTo(900, 8);
+    // 5 USD * 0.9 = 4.5 EUR
+    expect(totals.feesPaid).toBeCloseTo(4.5, 8);
+  });
+
+  it("includes a cash position when a deposit is recorded alongside instrument trades", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 5000,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+      }),
+      makeOrder({
+        id: "b1",
+        isin: "FR0010315770",
+        kind: "buy",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+        broker: "Bourse Direct",
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0010315770: 120 });
+    const cash = positions.find((p) => p.assetClass === "cash");
+    expect(cash).toBeDefined();
+    expect(cash!.qty).toBeCloseTo(4000, 6);
+    expect(cash!.currency).toBe("EUR");
+    expect(positions.find((p) => p.isin === "FR0010315770")).toBeDefined();
   });
 
   it("exposes Position.holdingFees and a portfolio holding-fees total with a depressed net XIRR", () => {

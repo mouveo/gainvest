@@ -7,6 +7,7 @@
 // two successive sells never reuse the same flow.
 
 import type { OrderRow, TradableOrder } from "./aggregate";
+import { feesEur, grossAmountEur } from "./aggregate";
 import { isForeignIsin, isHoldingFee } from "./holding-fees";
 import type { Support } from "./types";
 import { xirr, type Flow } from "./xirr";
@@ -86,11 +87,28 @@ export type ReplayResult = {
 };
 
 const KIND_ORDER: Record<OrderRow["kind"], number> = {
-  buy: 0,
-  dividend: 1,
-  sell: 2,
-  fee: 3,
+  deposit: 0,
+  buy: 1,
+  dividend: 2,
+  interest: 3,
+  sell: 4,
+  withdrawal: 5,
+  fee: 6,
+  tax: 7,
 };
+
+function brokerSlug(broker: string | null): string {
+  if (!broker) return "noBroker";
+  return broker.replace(/\s+/g, "").replace(/[^a-zA-Z0-9-]/g, "").toUpperCase();
+}
+
+function cashIsin(currency: string, broker: string | null): string {
+  return `CASH-${currency.toUpperCase()}-${brokerSlug(broker)}`;
+}
+
+function cashKey(support: Support, broker: string | null, currency: string): string {
+  return `cash\x01${support}\x01${broker ?? ""}\x01${currency.toUpperCase()}`;
+}
 
 function compareOrders(a: OrderRow, b: OrderRow): number {
   if (a.tradeDate !== b.tradeDate) return a.tradeDate < b.tradeDate ? -1 : 1;
@@ -162,13 +180,69 @@ function lineKey(isin: string, support: Support, broker: string | null): string 
   return `${isin}\x01${support}\x01${broker ?? ""}`;
 }
 
+type CashState = {
+  key: string;
+  support: Support;
+  broker: string | null;
+  currency: string;
+  balance: number; // native currency
+  // Net flows kept in EUR (historical via per-row fxRate). Used to surface
+  // pnlTotal on the cash position (interest received minus fees & taxes).
+  interestReceivedEur: number;
+  feesPaidEur: number;
+  taxPaidEur: number;
+  flowsCount: number;
+  firstFlowDate: string | null;
+  // Emit a cash position only once the user has explicitly recorded a cash
+  // transfer (deposit/withdrawal). Buy/sell/dividend/fee on their own keep
+  // running through the balance accumulator but don't surface a position —
+  // this matches the V0 product expectation that cash tracking starts when
+  // the user provides an initial balance.
+  hasExplicitTransfer: boolean;
+};
+
 export function replayTransactions(
   orders: OrderRow[],
   priceByIsin: Record<string, number>,
   today: Date = new Date(),
+  fxByCurrency: Record<string, number> = {},
 ): ReplayResult {
   const sorted = orders.slice().sort(compareOrders);
   const lines = new Map<string, LineState>();
+  const cash = new Map<string, CashState>();
+
+  function ensureCash(o: OrderRow): CashState {
+    const ccy = (o.currency ?? "EUR").toUpperCase();
+    const broker = o.broker ?? null;
+    const key = cashKey(o.support, broker, ccy);
+    let state = cash.get(key);
+    if (!state) {
+      state = {
+        key,
+        support: o.support,
+        broker,
+        currency: ccy,
+        balance: 0,
+        interestReceivedEur: 0,
+        feesPaidEur: 0,
+        taxPaidEur: 0,
+        flowsCount: 0,
+        firstFlowDate: null,
+        hasExplicitTransfer: false,
+      };
+      cash.set(key, state);
+    }
+    return state;
+  }
+
+  function applyCash(o: OrderRow, deltaNative: number): void {
+    const state = ensureCash(o);
+    state.balance += deltaNative;
+    state.flowsCount += 1;
+    if (state.firstFlowDate === null || o.tradeDate < state.firstFlowDate) {
+      state.firstFlowDate = o.tradeDate;
+    }
+  }
 
   function ensureLine(o: OrderRow): LineState {
     const broker = o.broker ?? null;
@@ -215,8 +289,11 @@ export function replayTransactions(
       const line = ensureLine(o);
       const qtyBefore = line.qty;
       const qtyAdded = o.quantity;
-      const cost = o.grossAmount + (o.fees ?? 0);
-      const grossLeg = qtyAdded * o.price;
+      const grossEurVal = grossAmountEur(o);
+      const feesEurVal = feesEur(o);
+      const cost = grossEurVal + feesEurVal;
+      // Gross leg without fees, expressed in EUR.
+      const grossLeg = grossEurVal;
       const newQty = qtyBefore + qtyAdded;
       line.divPerShareEntryAvg =
         newQty > 0
@@ -226,28 +303,45 @@ export function replayTransactions(
       line.totalCostGross += grossLeg;
       line.qty = newQty;
       line.activeBuyFlows.push({ date: o.tradeDate, amount: -cost });
-      line.totalFees += o.fees ?? 0;
+      line.totalFees += feesEurVal;
       line.buyCount += 1;
       line.ordersTouched.push(o as TradableOrder);
       if (line.firstBuyDate === null || o.tradeDate < line.firstBuyDate) {
         line.firstBuyDate = o.tradeDate;
       }
+      // Cash impact: native currency, fees included.
+      applyCash(o, -(o.grossAmount + (o.fees ?? 0)));
       continue;
     }
 
-    if (o.kind === "dividend") {
+    if (o.kind === "dividend" || o.kind === "interest") {
       if (o.grossAmount <= 0) continue;
+      const grossEurVal = grossAmountEur(o);
       const orderBroker = o.broker ?? null;
+      // Cash impact first — happens regardless of ISIN attribution.
+      applyCash(o, o.grossAmount);
+      const cashState = ensureCash(o);
+
+      // Interest WITHOUT ISIN: pure cash event, accumulate the cash KPI and
+      // do NOT attribute to any instrument.
+      if (o.kind === "interest" && !o.isin) {
+        cashState.interestReceivedEur += grossEurVal;
+        continue;
+      }
+      // Dividend or interest WITH ISIN: attribute to the matching instrument
+      // line(s). For interest with ISIN we explicitly do NOT increment the
+      // cash KPI to avoid double-counting (cash received once, instrument
+      // income once — same flow).
       if (orderBroker !== null) {
         const line = lines.get(lineKey(o.isin, o.support, orderBroker));
         if (!line || line.qty <= 0) continue;
-        line.divPerShareCumul += o.grossAmount / line.qty;
-        line.activeDividendFlows.push({ date: o.tradeDate, amount: o.grossAmount });
+        line.divPerShareCumul += grossEurVal / line.qty;
+        line.activeDividendFlows.push({ date: o.tradeDate, amount: grossEurVal });
         continue;
       }
-      // Legacy dividend with no broker: split across existing lines with the
-      // same (isin, support) and qty > 0, prorata of qty. Never create a new
-      // line for an orphan dividend.
+      // Legacy dividend/interest with no broker: split across existing lines
+      // with the same (isin, support) and qty > 0, prorata of qty. Never
+      // create a new line for an orphan flow.
       const candidates: LineState[] = [];
       let totalQty = 0;
       for (const candidate of lines.values()) {
@@ -259,15 +353,34 @@ export function replayTransactions(
       }
       if (candidates.length === 0 || totalQty <= 0) continue;
       for (const candidate of candidates) {
-        const share = (candidate.qty / totalQty) * o.grossAmount;
+        const share = (candidate.qty / totalQty) * grossEurVal;
         candidate.divPerShareCumul += share / candidate.qty;
         candidate.activeDividendFlows.push({ date: o.tradeDate, amount: share });
       }
       continue;
     }
 
+    if (o.kind === "deposit") {
+      applyCash(o, o.grossAmount);
+      ensureCash(o).hasExplicitTransfer = true;
+      continue;
+    }
+    if (o.kind === "withdrawal") {
+      applyCash(o, -o.grossAmount);
+      ensureCash(o).hasExplicitTransfer = true;
+      continue;
+    }
+    if (o.kind === "tax") {
+      applyCash(o, -o.grossAmount);
+      ensureCash(o).taxPaidEur += grossAmountEur(o);
+      continue;
+    }
+
     if (o.kind === "sell") {
       if (o.quantity == null || o.quantity <= 0 || o.price == null) continue;
+      // Cash impact, regardless of whether the instrument line was found.
+      applyCash(o, o.grossAmount - (o.fees ?? 0));
+
       const line = lines.get(lineKey(o.isin, o.support, o.broker ?? null));
       if (!line || line.qty <= 0) continue;
 
@@ -276,7 +389,9 @@ export function replayTransactions(
       const ratio = cappedQty / qtyBefore;
       const pruAtSale = line.totalCost / qtyBefore;
       const costBasis = cappedQty * pruAtSale;
-      const saleNet = o.grossAmount - (o.fees ?? 0);
+      const grossEurVal = grossAmountEur(o);
+      const feesEurVal = feesEur(o);
+      const saleNet = grossEurVal - feesEurVal;
 
       const buySplit = splitFlows(line.activeBuyFlows, ratio);
       const divSplit = splitFlows(line.activeDividendFlows, ratio);
@@ -347,20 +462,28 @@ export function replayTransactions(
       line.activeDividendFlows = divSplit.remaining;
       line.activeHoldingFeeFlows = feeSplit.remaining;
       line.holdingFeesActive -= holdingFeesAttributed;
-      line.totalFees += o.fees ?? 0;
+      line.totalFees += feesEurVal;
       line.sellCount += 1;
       line.ordersTouched.push(o as TradableOrder);
       continue;
     }
 
-    // kind === "fee": a custody-fee row ("droits de garde") is split across
-    // active foreign positions in proportion to their totalCost. KIND_ORDER
-    // places fees AFTER buys/dividends/sells of the same day, so the snapshot
-    // of eligible lines reflects every same-day buy and the remaining qty
-    // after every same-day sell. Standalone fees with another label fall
-    // through and are ignored.
-    if (o.kind === "fee" && isHoldingFee(o.notes)) {
-      const totalFee = o.grossAmount;
+    if (o.kind === "fee") {
+      // Cash impact for every fee row (custody fees AND broker/transaction
+      // fees that don't match the "Droits de garde" pattern).
+      applyCash(o, -o.grossAmount);
+
+      // Custody-fee row ("droits de garde") is split across active foreign
+      // positions in proportion to their totalCost. KIND_ORDER places fees
+      // AFTER buys/dividends/sells of the same day, so the snapshot of
+      // eligible lines reflects every same-day buy and the remaining qty
+      // after every same-day sell. Fees that don't match the holding-fee
+      // pattern stay as a cash KPI only (no instrument attribution).
+      if (!isHoldingFee(o.notes)) {
+        if (!o.isin) ensureCash(o).feesPaidEur += grossAmountEur(o);
+        continue;
+      }
+      const totalFee = grossAmountEur(o);
       if (totalFee <= 0) continue;
 
       const feeBroker = o.broker ?? null;
@@ -477,6 +600,65 @@ export function replayTransactions(
       buyCount: line.buyCount,
       sellCount: line.sellCount,
       orders: line.ordersTouched.slice().sort((a, b) => a.tradeDate.localeCompare(b.tradeDate)),
+    });
+  }
+
+  // Cash positions — one per (support, broker, currency) where the user has
+  // explicitly recorded a transfer. Native balance × current FX = EUR
+  // valuation; pnlTotal surfaces the cash-only net flows (interest minus fees
+  // & taxes that did not land on an instrument).
+  for (const state of cash.values()) {
+    if (!state.hasExplicitTransfer) continue;
+    const fxToEur = fxByCurrency[state.currency] ?? (state.currency === "EUR" ? 1 : 1);
+    const valuationEur = state.balance * fxToEur;
+    const pnlTotalCash =
+      state.interestReceivedEur - state.feesPaidEur - state.taxPaidEur;
+    const firstDateStr = state.firstFlowDate ?? todayStr;
+    const firstDate = new Date(`${firstDateStr}T00:00:00`);
+    const days = Math.max(1, (today.getTime() - firstDate.getTime()) / 86_400_000);
+
+    positions.push({
+      key: state.key,
+      isin: cashIsin(state.currency, state.broker),
+      instrumentId: null,
+      preferredMic: null,
+      preferredCurrency: state.currency,
+      support: state.support,
+      broker: state.broker,
+      instrumentName: `Cash ${state.currency}${state.broker ? ` (${state.broker})` : ""}`,
+      assetClass: "cash",
+      currency: state.currency,
+      qty: state.balance,
+      pru: 1,
+      invested: valuationEur,
+      pruGross: 1,
+      investedGross: valuationEur,
+      pnlCapitalGross: 0,
+      currentPrice: fxToEur,
+      valuation: valuationEur,
+      totalCost: valuationEur,
+      dividendsAttributed: 0,
+      totalFees: state.feesPaidEur,
+      pnlCapital: 0,
+      pnlTotal: pnlTotalCash,
+      pnlPctCapital: 0,
+      pnlPctTotal: 0,
+      xirrCapital: Number.NaN,
+      xirrTotal: Number.NaN,
+      cashFlowsCapital: [],
+      cashFlowsTotal: [],
+      holdingFeesAttributed: 0,
+      cashFlowsCapitalNetFees: [],
+      cashFlowsTotalNetFees: [],
+      xirrCapitalNetFees: Number.NaN,
+      xirrTotalNetFees: Number.NaN,
+      firstBuyDate: firstDate,
+      daysHeld: Math.round(days),
+      yearsHeld: days / 365.25,
+      ordersCount: state.flowsCount,
+      buyCount: 0,
+      sellCount: 0,
+      orders: [],
     });
   }
 

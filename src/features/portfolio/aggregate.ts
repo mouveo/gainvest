@@ -13,6 +13,19 @@ import {
 import type { Support } from "./types";
 import { xirr, type Flow } from "./xirr";
 
+// Cash kinds + buy/sell/dividend/fee. `interest` and `tax` arrive with IBKR;
+// `deposit` / `withdrawal` are user-facing cash transfers that close the loop
+// on the cash replay.
+export type OrderKind =
+  | "buy"
+  | "sell"
+  | "dividend"
+  | "interest"
+  | "fee"
+  | "tax"
+  | "deposit"
+  | "withdrawal";
+
 export type OrderRow = {
   id: string;
   isin: string;
@@ -22,16 +35,20 @@ export type OrderRow = {
   // For dividend/fee rows without an instrument, this can carry the description
   // ("Droits de garde 2022 T3" etc.) — see queries.ts.
   instrumentName: string;
-  // "cash" is used as a fallback for fee rows without an instrument.
+  // "cash" is used as a fallback for cash flows without an instrument.
   assetClass: string;
+  // Native currency of grossAmount/fees/price. Use fxRate to project to EUR.
   currency: string;
-  kind: "buy" | "sell" | "dividend" | "fee";
+  kind: OrderKind;
   tradeDate: string;
   tradeTime: string | null;
   quantity: number | null;
   price: number | null;
+  // grossAmount and fees are in `currency`. Multiply by fxRate to get EUR.
   grossAmount: number;
   fees: number;
+  // currency -> EUR rate snapshot at trade time. Defaults to 1 for EUR rows.
+  fxRate: number;
   // Free-text description preserved from the broker row. Used to detect
   // holding-fee subtypes ("Droits de garde", "Frais de conservation").
   notes: string | null;
@@ -41,6 +58,14 @@ export type OrderRow = {
 };
 
 export type TradableOrder = OrderRow & { quantity: number; price: number };
+
+export function grossAmountEur(o: Pick<OrderRow, "grossAmount" | "fxRate">): number {
+  return o.grossAmount * (o.fxRate ?? 1);
+}
+
+export function feesEur(o: Pick<OrderRow, "fees" | "fxRate">): number {
+  return (o.fees ?? 0) * (o.fxRate ?? 1);
+}
 
 export type Position = {
   key: string;
@@ -153,8 +178,9 @@ export function aggregate(
   orders: OrderRow[],
   priceByIsin: Record<string, number>,
   today: Date = new Date(),
+  fxByCurrency: Record<string, number> = {},
 ): Position[] {
-  const { positions } = replayTransactions(orders, priceByIsin, today);
+  const { positions } = replayTransactions(orders, priceByIsin, today, fxByCurrency);
   return positions.map(activeToPosition).sort(byValuationDesc);
 }
 
@@ -162,8 +188,14 @@ export function aggregateWithRealizations(
   orders: OrderRow[],
   priceByIsin: Record<string, number>,
   today: Date = new Date(),
+  fxByCurrency: Record<string, number> = {},
 ): { positions: Position[]; realizations: PastRealization[] } {
-  const { positions, realizations } = replayTransactions(orders, priceByIsin, today);
+  const { positions, realizations } = replayTransactions(
+    orders,
+    priceByIsin,
+    today,
+    fxByCurrency,
+  );
   return {
     positions: positions.map(activeToPosition).sort(byValuationDesc),
     realizations,
@@ -251,6 +283,11 @@ export type MovementTotals = {
   totalSells: number;
   dividendsReceived: number;
   feesPaid: number;
+  // Cash KPIs (in EUR via fxRate).
+  depositsTotal: number;
+  withdrawalsTotal: number;
+  interestReceived: number;
+  taxesPaid: number;
 };
 
 export function computeMovementTotals(orders: OrderRow[]): MovementTotals {
@@ -258,17 +295,31 @@ export function computeMovementTotals(orders: OrderRow[]): MovementTotals {
   let totalSells = 0;
   let dividendsReceived = 0;
   let feesPaid = 0;
+  let depositsTotal = 0;
+  let withdrawalsTotal = 0;
+  let interestReceived = 0;
+  let taxesPaid = 0;
   for (const o of orders) {
+    const grossEur = grossAmountEur(o);
+    const fEur = feesEur(o);
     if (o.kind === "buy") {
-      totalBuys += o.grossAmount;
-      feesPaid += o.fees;
+      totalBuys += grossEur;
+      feesPaid += fEur;
     } else if (o.kind === "sell") {
-      totalSells += o.grossAmount;
-      feesPaid += o.fees;
+      totalSells += grossEur;
+      feesPaid += fEur;
     } else if (o.kind === "dividend") {
-      dividendsReceived += o.grossAmount;
+      dividendsReceived += grossEur;
     } else if (o.kind === "fee") {
-      feesPaid += o.grossAmount;
+      feesPaid += grossEur;
+    } else if (o.kind === "deposit") {
+      depositsTotal += grossEur;
+    } else if (o.kind === "withdrawal") {
+      withdrawalsTotal += grossEur;
+    } else if (o.kind === "interest") {
+      interestReceived += grossEur;
+    } else if (o.kind === "tax") {
+      taxesPaid += grossEur;
     }
   }
   return {
@@ -277,6 +328,10 @@ export function computeMovementTotals(orders: OrderRow[]): MovementTotals {
     totalSells,
     dividendsReceived,
     feesPaid,
+    depositsTotal,
+    withdrawalsTotal,
+    interestReceived,
+    taxesPaid,
   };
 }
 

@@ -37,6 +37,9 @@ export type ParsedRow = {
   quantity: number | null;
   totalAmount: number;
   computedFees?: FeeBreakdown;
+  // grossAmount, price, fees are expressed in the row's native `currency`.
+  // Use fxRate (currency -> EUR) to project them onto EUR. EUR rows carry
+  // fxRate = 1.
   grossAmount?: number;
   price?: number;
   needsAttention: boolean;
@@ -48,6 +51,7 @@ export type ParsedRow = {
   name?: string | null;
   currency?: string;
   fees?: number;
+  fxRate?: number | null;
   broker?: string;
   notes?: string | null;
   // Liquidation rows (BD) do not carry a quantity in the CSV — the import

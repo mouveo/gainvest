@@ -20,6 +20,7 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     price: 100,
     grossAmount: 1000,
     fees: 0,
+    fxRate: 1,
     notes: null,
     executionVenue: null,
     broker: null,

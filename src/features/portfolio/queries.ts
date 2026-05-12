@@ -9,8 +9,20 @@ import type { Support } from "./types";
 /**
  * Read the current user's transactions joined with their instrument metadata
  * (RLS already restricts to the caller's rows).
+ *
+ * Cash kinds (deposit/withdrawal/interest/tax) are included unconditionally so
+ * the replay can compute per-(support, broker, currency) cash balances.
  */
-const UI_KINDS = new Set(["buy", "sell", "dividend", "fee"]);
+const UI_KINDS = new Set([
+  "buy",
+  "sell",
+  "dividend",
+  "fee",
+  "interest",
+  "tax",
+  "deposit",
+  "withdrawal",
+]);
 
 export async function getOrders(): Promise<OrderRow[]> {
   const supabase = await createClient();
@@ -27,6 +39,7 @@ export async function getOrders(): Promise<OrderRow[]> {
         gross_amount,
         fees,
         tax,
+        fx_rate,
         notes,
         currency,
         execution_venue,
@@ -69,14 +82,15 @@ export async function getOrders(): Promise<OrderRow[]> {
       preferredCurrency = instrument.preferred_currency ?? null;
       instrumentName = instrument.name;
       assetClass = instrument.asset_class;
-      currency = instrument.currency;
-    } else if (kind === "fee") {
-      instrumentName = row.notes ?? "Frais";
+      // For cash flows we keep the row's native currency (the row may be in
+      // USD even when the instrument it references is EUR-denominated for
+      // example). Native arithmetic + per-row fxRate handles the EUR view.
+      currency = row.currency ?? instrument.currency;
+    } else {
+      // Cash row without an instrument: synthetic name from notes/kind.
+      instrumentName = row.notes ?? kind;
       assetClass = "cash";
       currency = row.currency ?? "EUR";
-    } else {
-      // Non-fee row without an instrument: cannot render meaningfully.
-      continue;
     }
 
     orders.push({
@@ -95,6 +109,7 @@ export async function getOrders(): Promise<OrderRow[]> {
       price: row.price == null ? null : Number(row.price),
       grossAmount: Number(row.gross_amount ?? 0),
       fees: Number(row.fees ?? 0) + Number(row.tax ?? 0),
+      fxRate: Number(row.fx_rate ?? 1),
       notes: row.notes ?? null,
       executionVenue: row.execution_venue,
       broker: row.broker,
@@ -187,6 +202,28 @@ async function getPricesUpdatedAt(orders: OrderRow[]): Promise<string | null> {
   return latest;
 }
 
+async function getFxRates(orders: OrderRow[]): Promise<Record<string, number>> {
+  const ccys = new Set<string>();
+  for (const o of orders) {
+    const ccy = (o.currency ?? "EUR").toUpperCase();
+    if (ccy !== "EUR") ccys.add(ccy);
+  }
+  if (ccys.size === 0) return { EUR: 1 };
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("fx_rates")
+    .select("currency, eur_rate")
+    .in("currency", Array.from(ccys));
+  if (error) throw error;
+  const out: Record<string, number> = { EUR: 1 };
+  for (const r of data ?? []) {
+    if (r.currency && r.eur_rate != null) {
+      out[r.currency.toUpperCase()] = Number(r.eur_rate);
+    }
+  }
+  return out;
+}
+
 export async function getPositions(): Promise<{
   orders: OrderRow[];
   positions: Position[];
@@ -197,7 +234,13 @@ export async function getPositions(): Promise<{
   const orders = await getOrders();
   const priceByIsin = await getCurrentPrices(orders);
   const pricesUpdatedAt = await getPricesUpdatedAt(orders);
-  const { positions, realizations } = aggregateWithRealizations(orders, priceByIsin);
+  const fxByCurrency = await getFxRates(orders);
+  const { positions, realizations } = aggregateWithRealizations(
+    orders,
+    priceByIsin,
+    new Date(),
+    fxByCurrency,
+  );
   return { orders, positions, realizations, priceByIsin, pricesUpdatedAt };
 }
 
