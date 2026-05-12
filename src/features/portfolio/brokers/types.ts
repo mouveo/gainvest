@@ -69,6 +69,11 @@ export type ParsedRow = {
   // Populated only for bond rows; consumed by the import action to fill
   // `instruments.bond_*` columns.
   bondMetadata?: BondMetadata;
+  // Preferred listing detected from the broker's data (e.g. IBKR's
+  // `listingExchange` mapped to a MIC). Both fields must be set together —
+  // the import action only writes the pair when complete.
+  preferredMic?: string | null;
+  preferredCurrency?: string | null;
 };
 
 export type FileParseResult = { rows: ParsedRow[]; warnings: string[] };

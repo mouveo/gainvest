@@ -25,6 +25,30 @@ export function eodhdExchangeToMic(code: string): string | null {
   return EODHD_EXCHANGE_TO_MIC[code] ?? null;
 }
 
+export const IBKR_EXCHANGE_TO_MIC: Record<string, string> = {
+  AEB: "XAMS",
+  IBIS2: "XETR",
+  IBIS: "XETR",
+  NYSE: "XNYS",
+  ARCA: "XNYS",
+  NASDAQ: "XNAS",
+  ISLAND: "XNAS",
+  EBS: "XSWX",
+  LSE: "XLON",
+  LSEIOB: "XLON",
+  SBF: "XPAR",
+  SFB: "XPAR",
+  BVME: "XMIL",
+  MEXI: "XMAD",
+  "ENEXT.BE": "XBRU",
+};
+
+export function ibkrExchangeToMic(code: string): string | null {
+  const cleaned = code.trim().toUpperCase();
+  if (!cleaned) return null;
+  return IBKR_EXCHANGE_TO_MIC[cleaned] ?? null;
+}
+
 export function micToEodhdExchange(mic: string): string | null {
   return MIC_TO_EODHD_EXCHANGE[mic] ?? null;
 }

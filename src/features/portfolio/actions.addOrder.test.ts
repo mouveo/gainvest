@@ -16,18 +16,28 @@ type Insert = Record<string, unknown>;
 
 type FxRow = { currency: string; eur_rate: number };
 
+type ExistingInstrument = {
+  id: string;
+  symbol: string;
+  preferred_mic: string | null;
+  preferred_currency: string | null;
+};
+
 function makeSupabase(opts: {
   user?: { id: string } | null;
   fxRates?: FxRow[];
   instrumentId?: string;
   accountId?: string;
+  existingInstruments?: ExistingInstrument[];
 }) {
   const inserts: { table: string; payload: Insert | Insert[] }[] = [];
-  const upserts: { table: string; payload: Insert; opts: unknown }[] = [];
+  const instrumentInserts: { payload: Insert }[] = [];
+  const instrumentUpdates: { id: string; patch: Insert }[] = [];
   const user = opts.user === undefined ? { id: "u1" } : opts.user;
   const fx = opts.fxRates ?? [{ currency: "USD", eur_rate: 0.92 }];
   const instrumentId = opts.instrumentId ?? "inst-1";
   const accountId = opts.accountId ?? "acc-1";
+  let existing: ExistingInstrument[] = (opts.existingInstruments ?? []).slice();
 
   const client = {
     auth: {
@@ -63,18 +73,61 @@ function makeSupabase(opts: {
         };
       }
       if (table === "instruments") {
+        // Lookup state for the addOrder select chain: select(cols).eq("symbol", x).is("mic", null).maybeSingle()
+        const lookup: { symbol?: string; micIsNull?: boolean } = {};
+        const selectBuilder = {
+          eq: vi.fn((col: string, val: string) => {
+            if (col === "symbol") lookup.symbol = val;
+            return selectBuilder;
+          }),
+          is: vi.fn((col: string, val: unknown) => {
+            if (col === "mic" && val === null) lookup.micIsNull = true;
+            return selectBuilder;
+          }),
+          maybeSingle: vi.fn(async () => {
+            if (!lookup.symbol) return { data: null, error: null };
+            const row = existing.find((e) => e.symbol === lookup.symbol);
+            return { data: row ?? null, error: null };
+          }),
+        };
+
         return {
-          upsert: vi.fn((payload: Insert, opts: unknown) => {
-            upserts.push({ table, payload, opts });
+          select: vi.fn(() => selectBuilder),
+          insert: vi.fn((payload: Insert) => {
+            instrumentInserts.push({ payload });
+            const inserted: ExistingInstrument = {
+              id: instrumentId,
+              symbol: String(payload.symbol ?? ""),
+              preferred_mic: (payload.preferred_mic as string | undefined) ?? null,
+              preferred_currency: (payload.preferred_currency as string | undefined) ?? null,
+            };
+            existing = [...existing, inserted];
             return {
               select: vi.fn(() => ({
-                single: vi.fn(async () => ({
-                  data: { id: instrumentId },
-                  error: null,
-                })),
+                single: vi.fn(async () => ({ data: { id: instrumentId }, error: null })),
               })),
             };
           }),
+          update: vi.fn((patch: Insert) => ({
+            eq: vi.fn(async (col: string, id: string) => {
+              if (col === "id") {
+                instrumentUpdates.push({ id, patch });
+                existing = existing.map((e) =>
+                  e.id === id
+                    ? {
+                        ...e,
+                        preferred_mic:
+                          (patch.preferred_mic as string | undefined) ?? e.preferred_mic,
+                        preferred_currency:
+                          (patch.preferred_currency as string | undefined) ??
+                          e.preferred_currency,
+                      }
+                    : e,
+                );
+              }
+              return { error: null };
+            }),
+          })),
         };
       }
       if (table === "transactions") {
@@ -89,7 +142,7 @@ function makeSupabase(opts: {
     }),
   };
 
-  return { client, inserts, upserts };
+  return { client, inserts, instrumentInserts, instrumentUpdates };
 }
 
 const createClientMock = vi.mocked(createClient);
@@ -195,7 +248,8 @@ describe("addOrder — cash kinds", () => {
       }),
     );
     expect(r.ok).toBe(true);
-    expect(sb.upserts).toHaveLength(0); // no instrument upsert for cash
+    expect(sb.instrumentInserts).toHaveLength(0); // no instrument insert for cash
+    expect(sb.instrumentUpdates).toHaveLength(0);
     expect(sb.inserts).toHaveLength(1);
     const ins = sb.inserts[0]!.payload as Record<string, unknown>;
     expect(ins.kind).toBe("deposit");
@@ -257,6 +311,168 @@ describe("addOrder — cash kinds", () => {
     const ins = sb.inserts[0]!.payload as Record<string, unknown>;
     expect(ins.currency).toBe("USD");
     expect(ins.fx_rate).toBeCloseTo(0.92, 8);
+  });
+
+  it("creates a new instrument with the preferred listing when the form supplies a complete pair", async () => {
+    const sb = makeSupabase({ existingInstruments: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        isin: "IE00B4L5Y983",
+        name: "iShares Core MSCI World",
+        quantity: "10",
+        price: "100",
+        gross_amount: "1000",
+        fees: "1",
+        trade_date: "2025-01-01",
+        broker: "Bourse Direct",
+        support: "CTO",
+        currency: "EUR",
+        asset_class: "etf",
+        preferred_mic: "XAMS",
+        preferred_currency: "EUR",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(sb.instrumentInserts).toHaveLength(1);
+    const payload = sb.instrumentInserts[0]!.payload as Record<string, unknown>;
+    expect(payload.preferred_mic).toBe("XAMS");
+    expect(payload.preferred_currency).toBe("EUR");
+    expect(sb.instrumentUpdates).toHaveLength(0);
+  });
+
+  it("creates a new instrument without preferred columns when no listing is chosen", async () => {
+    const sb = makeSupabase({ existingInstruments: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        isin: "FR0010315770",
+        name: "Lyxor",
+        quantity: "10",
+        price: "100",
+        gross_amount: "1000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Bourse Direct",
+        support: "CTO",
+        currency: "EUR",
+        asset_class: "etf",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(sb.instrumentInserts).toHaveLength(1);
+    const payload = sb.instrumentInserts[0]!.payload as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("preferred_mic");
+    expect(payload).not.toHaveProperty("preferred_currency");
+    expect(sb.instrumentUpdates).toHaveLength(0);
+  });
+
+  it("fills the preferred listing on an existing instrument when both columns are NULL", async () => {
+    const sb = makeSupabase({
+      existingInstruments: [
+        {
+          id: "inst-existing",
+          symbol: "IE00B4L5Y983",
+          preferred_mic: null,
+          preferred_currency: null,
+        },
+      ],
+      instrumentId: "inst-existing",
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        isin: "IE00B4L5Y983",
+        name: "iShares Core MSCI World",
+        quantity: "10",
+        price: "100",
+        gross_amount: "1000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Bourse Direct",
+        support: "CTO",
+        currency: "EUR",
+        asset_class: "etf",
+        preferred_mic: "XAMS",
+        preferred_currency: "EUR",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(sb.instrumentInserts).toHaveLength(0);
+    expect(sb.instrumentUpdates).toHaveLength(1);
+    expect(sb.instrumentUpdates[0]!.id).toBe("inst-existing");
+    expect(sb.instrumentUpdates[0]!.patch).toEqual({
+      preferred_mic: "XAMS",
+      preferred_currency: "EUR",
+    });
+  });
+
+  it("never overwrites a preferred listing already set on the cached instrument", async () => {
+    const sb = makeSupabase({
+      existingInstruments: [
+        {
+          id: "inst-locked",
+          symbol: "IE00B4L5Y983",
+          preferred_mic: "XETR",
+          preferred_currency: "EUR",
+        },
+      ],
+      instrumentId: "inst-locked",
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        isin: "IE00B4L5Y983",
+        name: "iShares Core MSCI World",
+        quantity: "10",
+        price: "100",
+        gross_amount: "1000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Bourse Direct",
+        support: "CTO",
+        currency: "EUR",
+        asset_class: "etf",
+        preferred_mic: "XAMS",
+        preferred_currency: "EUR",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(sb.instrumentInserts).toHaveLength(0);
+    expect(sb.instrumentUpdates).toHaveLength(0);
+    expect(sb.inserts).toHaveLength(1);
+  });
+
+  it("ignores an incomplete preferred pair (mic-only) at creation", async () => {
+    const sb = makeSupabase({ existingInstruments: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        isin: "IE00B4L5Y983",
+        name: "iShares Core MSCI World",
+        quantity: "10",
+        price: "100",
+        gross_amount: "1000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Bourse Direct",
+        support: "CTO",
+        currency: "EUR",
+        asset_class: "etf",
+        preferred_mic: "XAMS",
+        preferred_currency: "",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(sb.instrumentInserts).toHaveLength(1);
+    const payload = sb.instrumentInserts[0]!.payload as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("preferred_mic");
+    expect(payload).not.toHaveProperty("preferred_currency");
   });
 
   it("rejects a non-EUR cash flow when the FX rate is missing", async () => {

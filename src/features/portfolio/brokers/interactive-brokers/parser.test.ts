@@ -284,6 +284,120 @@ describe("parseIbkrFlexXml — native amounts + fxRate", () => {
     });
   });
 
+  it("maps IBKR listingExchange to preferred MIC + currency on trades", () => {
+    const xml = buildXml(`
+<Trades>
+  <Trade
+    buySell="BUY"
+    isin="DE0005140008"
+    symbol="DBK"
+    description="DEUTSCHE BANK AG"
+    listingExchange="IBIS2"
+    currency="EUR"
+    fxRateToBase="1"
+    quantity="5"
+    tradePrice="10"
+    proceeds="-50"
+    ibCommission="-1"
+    tradeDate="2024-05-12"
+    ibExecID="exec-ibis2"
+  />
+  <Trade
+    buySell="BUY"
+    isin="NL0011794037"
+    symbol="ABN"
+    description="ABN AMRO"
+    listingExchange="AEB"
+    currency="EUR"
+    fxRateToBase="1"
+    quantity="10"
+    tradePrice="15"
+    proceeds="-150"
+    ibCommission="-1"
+    tradeDate="2024-05-12"
+    ibExecID="exec-aeb"
+  />
+</Trades>`);
+
+    const rows = parseIbkrFlexXml(xml, { support: "CTO" });
+    const ibis = rows.find((r) => r.isin === "DE0005140008")!;
+    const aeb = rows.find((r) => r.isin === "NL0011794037")!;
+    expect(ibis.preferredMic).toBe("XETR");
+    expect(ibis.preferredCurrency).toBe("EUR");
+    expect(aeb.preferredMic).toBe("XAMS");
+    expect(aeb.preferredCurrency).toBe("EUR");
+  });
+
+  it("leaves preferred listing null when listingExchange is missing", () => {
+    const xml = buildXml(`
+<Trades>
+  <Trade
+    buySell="BUY"
+    assetCategory="BOND"
+    subCategory="CORP"
+    isin="US912828YV68"
+    symbol="UST 4.125 2027"
+    description="UST 4.125 11/15/27"
+    currency="USD"
+    fxRateToBase="0.91"
+    quantity="10000"
+    tradePrice="98.5"
+    proceeds="-9850"
+    ibCommission="-2"
+    tradeDate="2024-06-01"
+    ibExecID="exec-bond-no-listing"
+  />
+  <Trade
+    buySell="BUY"
+    isin="US0231351067"
+    symbol="AMZN"
+    description="AMAZON.COM INC"
+    listingExchange=""
+    currency="USD"
+    fxRateToBase="0.92"
+    quantity="1"
+    tradePrice="200"
+    proceeds="-200"
+    ibCommission="-1"
+    tradeDate="2024-05-12"
+    ibExecID="exec-empty-listing"
+  />
+</Trades>`);
+
+    const rows = parseIbkrFlexXml(xml, { support: "CTO" });
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.preferredMic).toBeNull();
+      expect(r.preferredCurrency).toBeNull();
+    }
+  });
+
+  it("leaves preferred listing null when listingExchange is unknown", () => {
+    const xml = buildXml(`
+<Trades>
+  <Trade
+    buySell="BUY"
+    isin="US0231351067"
+    symbol="AMZN"
+    description="AMAZON.COM INC"
+    listingExchange="FOOBAR"
+    currency="USD"
+    fxRateToBase="0.92"
+    quantity="1"
+    tradePrice="200"
+    proceeds="-200"
+    ibCommission="-1"
+    tradeDate="2024-05-12"
+    ibExecID="exec-unknown-listing"
+  />
+</Trades>`);
+
+    const rows = parseIbkrFlexXml(xml, { support: "CTO" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.preferredMic).toBeNull();
+    expect(rows[0]!.preferredCurrency).toBeNull();
+  });
+
   it("maps Deposits/Withdrawals on amount sign", () => {
     const xml = buildXml(`
 <CashTransactions>

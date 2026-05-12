@@ -1,5 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 
+import { ibkrExchangeToMic } from "@/lib/quotes/mic";
+
 import { parseBondSymbol } from "../../bonds/parse-symbol";
 import type { Support } from "../../types";
 import type { AssetClass } from "../../types";
@@ -81,6 +83,9 @@ export function parseIbkrFlexXml(
     const description = str(t.description) || symbol;
     const assetClass = classifyIbkrAsset(str(t.assetCategory), str(t.subCategory));
     const tradeId = str(t.tradeID) || null;
+    const listingExchange = str(t.listingExchange);
+    const preferredMic = listingExchange ? ibkrExchangeToMic(listingExchange) : null;
+    const preferredCurrency = preferredMic ? nativeCurrency : null;
 
     const row: ParsedRow = {
       rawLine: lineNo++,
@@ -103,6 +108,8 @@ export function parseIbkrFlexXml(
       broker: "Interactive Brokers",
       assetClass,
       tradeId,
+      preferredMic,
+      preferredCurrency,
     };
 
     if (assetClass === "bond") {

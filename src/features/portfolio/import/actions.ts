@@ -30,6 +30,8 @@ type InstrumentLite = {
   bond_coupon_rate: number | null;
   bond_maturity_date: string | null;
   bond_coupon_frequency: number | null;
+  preferred_mic: string | null;
+  preferred_currency: string | null;
 };
 
 function round2(n: number): number {
@@ -206,6 +208,8 @@ export async function importBrokerOrders(
     currency: string | null;
     assetClass: AssetClass | null;
     bondMetadata: BondMetadata | null;
+    preferredMic: string | null;
+    preferredCurrency: string | null;
   };
   const brokerMetaByIsin = new Map<string, BrokerMeta>();
   for (const r of valid) {
@@ -216,12 +220,25 @@ export async function importBrokerOrders(
       currency: null,
       assetClass: null,
       bondMetadata: null,
+      preferredMic: null,
+      preferredCurrency: null,
     };
     existing.name = existing.name ?? r.name ?? null;
     existing.symbol = existing.symbol ?? r.symbol ?? null;
     existing.currency = existing.currency ?? r.currency ?? null;
     existing.assetClass = existing.assetClass ?? r.assetClass ?? null;
     existing.bondMetadata = existing.bondMetadata ?? r.bondMetadata ?? null;
+    // Keep the first complete pair (both mic + currency). Partial pairs are
+    // ignored — quote resolution downstream expects a coherent couple.
+    if (
+      existing.preferredMic == null &&
+      existing.preferredCurrency == null &&
+      r.preferredMic &&
+      r.preferredCurrency
+    ) {
+      existing.preferredMic = r.preferredMic;
+      existing.preferredCurrency = r.preferredCurrency;
+    }
     brokerMetaByIsin.set(r.isin, existing);
   }
 
@@ -229,7 +246,7 @@ export async function importBrokerOrders(
     const { data, error } = await supabase
       .from("instruments")
       .select(
-        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency",
+        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency, preferred_mic, preferred_currency",
       )
       .in("isin", isins);
     if (error) return { ok: false, error: error.message };
@@ -253,6 +270,8 @@ export async function importBrokerOrders(
       bond_coupon_rate?: number;
       bond_maturity_date?: string;
       bond_coupon_frequency?: number;
+      preferred_mic?: string;
+      preferred_currency?: string;
     } = {};
     if (meta.assetClass && meta.assetClass !== cached.asset_class) {
       patch.asset_class = meta.assetClass;
@@ -274,13 +293,25 @@ export async function importBrokerOrders(
         patch.bond_coupon_frequency = meta.bondMetadata.frequency;
       }
     }
+    // Only fill the preferred listing when both cached columns are still null
+    // AND the broker gave us a complete couple. Never overwrite a user's
+    // explicit choice — that's why we don't use a Supabase upsert here.
+    if (
+      cached.preferred_mic == null &&
+      cached.preferred_currency == null &&
+      meta.preferredMic &&
+      meta.preferredCurrency
+    ) {
+      patch.preferred_mic = meta.preferredMic;
+      patch.preferred_currency = meta.preferredCurrency;
+    }
     if (Object.keys(patch).length === 0) continue;
     const { data: updated, error: updErr } = await supabase
       .from("instruments")
       .update(patch)
       .eq("id", cached.id)
       .select(
-        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency",
+        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency, preferred_mic, preferred_currency",
       )
       .single();
     if (updErr || !updated) continue;
@@ -315,6 +346,8 @@ export async function importBrokerOrders(
       bond_coupon_rate?: number;
       bond_maturity_date?: string;
       bond_coupon_frequency?: number;
+      preferred_mic?: string;
+      preferred_currency?: string;
     } = { isin, symbol, name, asset_class: assetClass, currency, country };
 
     if (assetClass === "bond" && broker?.bondMetadata) {
@@ -322,11 +355,15 @@ export async function importBrokerOrders(
       insertPayload.bond_maturity_date = broker.bondMetadata.maturityDate;
       insertPayload.bond_coupon_frequency = broker.bondMetadata.frequency;
     }
+    if (broker?.preferredMic && broker?.preferredCurrency) {
+      insertPayload.preferred_mic = broker.preferredMic;
+      insertPayload.preferred_currency = broker.preferredCurrency;
+    }
     const { data: upserted, error: upsertErr } = await supabase
       .from("instruments")
       .upsert(insertPayload, { onConflict: "symbol,mic" })
       .select(
-        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency",
+        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency, preferred_mic, preferred_currency",
       )
       .single();
     if (upsertErr || !upserted) continue;
