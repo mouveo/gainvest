@@ -28,3 +28,24 @@ export function eodhdExchangeToMic(code: string): string | null {
 export function micToEodhdExchange(mic: string): string | null {
   return MIC_TO_EODHD_EXCHANGE[mic] ?? null;
 }
+
+// Libellés ISO 10383 + ville, pour l'UI. Permet à l'utilisateur de
+// reconnaître facilement XAMS = Amsterdam, XETR = Xetra Francfort, etc.
+const MIC_LABEL: Record<string, string> = {
+  XETR: "Xetra · Francfort",
+  XFRA: "Bourse de Francfort",
+  XPAR: "Euronext Paris",
+  XAMS: "Euronext Amsterdam",
+  XBRU: "Euronext Bruxelles",
+  XLIS: "Euronext Lisbonne",
+  XMIL: "Borsa Italiana · Milan",
+  XMAD: "Bolsa de Madrid",
+  XSWX: "SIX Swiss · Zurich",
+  XLON: "London Stock Exchange",
+  XNAS: "Nasdaq · New York",
+  XNYS: "NYSE · New York",
+};
+
+export function micLabel(mic: string): string {
+  return MIC_LABEL[mic] ?? mic;
+}

@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { micLabel } from "@/lib/quotes/mic";
 import { cn } from "@/lib/utils";
 
 import { fetchAvailableListings, setInstrumentListing } from "../actions";
@@ -147,7 +148,7 @@ export function ListingPicker({
                 <TableRow>
                   <TableHead className="w-10"></TableHead>
                   <TableHead>MIC</TableHead>
-                  <TableHead>Place</TableHead>
+                  <TableHead>Place / Ville</TableHead>
                   <TableHead>Devise</TableHead>
                   <TableHead className="text-right">Dernier cours</TableHead>
                 </TableRow>
@@ -173,7 +174,12 @@ export function ListingPicker({
                         />
                       </TableCell>
                       <TableCell className="font-mono">{l.mic}</TableCell>
-                      <TableCell>{l.exchangeName}</TableCell>
+                      <TableCell>
+                        <div>{micLabel(l.mic)}</div>
+                        <div className="text-muted-foreground font-mono text-xs">
+                          {l.exchangeName}
+                        </div>
+                      </TableCell>
                       <TableCell className="font-mono">{l.currency}</TableCell>
                       <TableCell className="text-right font-mono tabular-nums">
                         {l.previousClose != null ? fmtNum(l.previousClose, 2) : "—"}
