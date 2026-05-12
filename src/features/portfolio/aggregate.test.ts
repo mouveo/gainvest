@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregate, aggregateWithRealizations, computeTotals, type OrderRow } from "./aggregate";
+import {
+  aggregate,
+  aggregateWithRealizations,
+  computeMovementTotals,
+  computeRealizationTotals,
+  computeTotals,
+  type OrderRow,
+} from "./aggregate";
+import type { PastRealization } from "./realize";
 
 function makeOrder(overrides: Partial<OrderRow>): OrderRow {
   return {
@@ -23,6 +31,32 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     executionVenue: null,
     broker: null,
     support: "CTO",
+    ...overrides,
+  };
+}
+
+function makeRealization(overrides: Partial<PastRealization>): PastRealization {
+  return {
+    key: "FR0000000001\x01CTO\x01",
+    isin: "FR0000000001",
+    support: "CTO",
+    broker: null,
+    instrumentName: "Test",
+    assetClass: "etf",
+    currency: "EUR",
+    saleDate: "2025-01-01",
+    saleQty: 1,
+    saleNet: 0,
+    costBasis: 0,
+    pruAtSale: 0,
+    dividendsAttributed: 0,
+    holdingFeesAttributed: 0,
+    pnlCapital: 0,
+    pnlTotal: 0,
+    xirrCapital: 0,
+    xirrTotal: 0,
+    xirrCapitalNetFees: 0,
+    xirrTotalNetFees: 0,
     ...overrides,
   };
 }
@@ -276,6 +310,126 @@ describe("aggregate", () => {
     expect(bd.qty).toBe(5);
     expect(ibkr.qty).toBe(7);
     expect(bd.key).not.toBe(ibkr.key);
+  });
+
+  it("computeRealizationTotals sums fields and weights XIRR by costBasis", () => {
+    const reals: PastRealization[] = [
+      makeRealization({
+        saleNet: 600,
+        costBasis: 400,
+        pnlCapital: 200,
+        pnlTotal: 220,
+        xirrCapital: 0.1,
+        xirrTotal: 0.12,
+        xirrCapitalNetFees: 0.09,
+        xirrTotalNetFees: 0.11,
+      }),
+      makeRealization({
+        saleNet: 1200,
+        costBasis: 1000,
+        pnlCapital: 200,
+        pnlTotal: 240,
+        xirrCapital: 0.2,
+        xirrTotal: 0.22,
+        xirrCapitalNetFees: 0.19,
+        xirrTotalNetFees: 0.21,
+      }),
+    ];
+
+    const totals = computeRealizationTotals(reals);
+
+    expect(totals.count).toBe(2);
+    expect(totals.capitalRecovered).toBeCloseTo(1800, 8);
+    expect(totals.costBasis).toBeCloseTo(1400, 8);
+    expect(totals.pnlCapital).toBeCloseTo(400, 8);
+    expect(totals.pnlTotal).toBeCloseTo(460, 8);
+
+    const expectedCapital = (0.1 * 400 + 0.2 * 1000) / 1400;
+    const expectedTotal = (0.12 * 400 + 0.22 * 1000) / 1400;
+    const expectedCapitalNet = (0.09 * 400 + 0.19 * 1000) / 1400;
+    const expectedTotalNet = (0.11 * 400 + 0.21 * 1000) / 1400;
+    expect(totals.xirrCapital).toBeCloseTo(expectedCapital, 8);
+    expect(totals.xirrTotal).toBeCloseTo(expectedTotal, 8);
+    expect(totals.xirrCapitalNetFees).toBeCloseTo(expectedCapitalNet, 8);
+    expect(totals.xirrTotalNetFees).toBeCloseTo(expectedTotalNet, 8);
+  });
+
+  it("computeRealizationTotals ignores non-finite XIRR samples in the weighted average", () => {
+    const reals: PastRealization[] = [
+      makeRealization({
+        saleNet: 600,
+        costBasis: 400,
+        pnlCapital: 200,
+        pnlTotal: 200,
+        xirrCapital: 0.1,
+        xirrTotal: 0.1,
+        xirrCapitalNetFees: 0.1,
+        xirrTotalNetFees: 0.1,
+      }),
+      makeRealization({
+        saleNet: 1200,
+        costBasis: 1000,
+        pnlCapital: 200,
+        pnlTotal: 200,
+        xirrCapital: Number.NaN,
+        xirrTotal: Number.POSITIVE_INFINITY,
+        xirrCapitalNetFees: Number.NEGATIVE_INFINITY,
+        xirrTotalNetFees: Number.NaN,
+      }),
+    ];
+
+    const totals = computeRealizationTotals(reals);
+
+    expect(totals.xirrCapital).toBeCloseTo(0.1, 8);
+    expect(totals.xirrTotal).toBeCloseTo(0.1, 8);
+    expect(totals.xirrCapitalNetFees).toBeCloseTo(0.1, 8);
+    expect(totals.xirrTotalNetFees).toBeCloseTo(0.1, 8);
+  });
+
+  it("computeRealizationTotals returns zeros and NaN XIRR on an empty list", () => {
+    const totals = computeRealizationTotals([]);
+    expect(totals.count).toBe(0);
+    expect(totals.capitalRecovered).toBe(0);
+    expect(totals.costBasis).toBe(0);
+    expect(totals.pnlCapital).toBe(0);
+    expect(totals.pnlTotal).toBe(0);
+    expect(Number.isNaN(totals.xirrCapital)).toBe(true);
+    expect(Number.isNaN(totals.xirrTotal)).toBe(true);
+    expect(Number.isNaN(totals.xirrCapitalNetFees)).toBe(true);
+    expect(Number.isNaN(totals.xirrTotalNetFees)).toBe(true);
+  });
+
+  it("computeMovementTotals splits buy/sell/dividend/fee rows correctly", () => {
+    const orders: OrderRow[] = [
+      makeOrder({ id: "b1", kind: "buy", grossAmount: 1000, fees: 5 }),
+      makeOrder({ id: "b2", kind: "buy", grossAmount: 500, fees: 2 }),
+      makeOrder({ id: "s1", kind: "sell", grossAmount: 800, fees: 4 }),
+      makeOrder({
+        id: "d1",
+        kind: "dividend",
+        grossAmount: 50,
+        fees: 999,
+        quantity: null,
+        price: null,
+      }),
+      makeOrder({
+        id: "f1",
+        kind: "fee",
+        grossAmount: 12,
+        fees: 0,
+        quantity: null,
+        price: null,
+      }),
+    ];
+
+    const totals = computeMovementTotals(orders);
+
+    expect(totals.count).toBe(5);
+    expect(totals.totalBuys).toBeCloseTo(1500, 8);
+    expect(totals.totalSells).toBeCloseTo(800, 8);
+    expect(totals.dividendsReceived).toBeCloseTo(50, 8);
+    // 5 + 2 (buy fees) + 4 (sell fees) + 12 (fee row grossAmount). Dividend fees ignored.
+    expect(totals.feesPaid).toBeCloseTo(23, 8);
   });
 
   it("exposes Position.holdingFees and a portfolio holding-fees total with a depressed net XIRR", () => {

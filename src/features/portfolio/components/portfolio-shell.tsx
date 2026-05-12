@@ -64,6 +64,7 @@ export function PortfolioShell({
       </div>
 
       <KpiStrip
+        view="positions"
         totals={totals}
         pricesUpdatedAt={pricesUpdatedAt}
         withDividends={withDividends}
