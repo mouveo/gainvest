@@ -66,3 +66,32 @@ export function pickPreferredListing(listings: Listing[]): Listing | null {
 
   return ranked[0] ?? null;
 }
+
+export function findListingForPreference(
+  listings: Listing[],
+  mic: string | null | undefined,
+  currency: string | null | undefined,
+): Listing | null {
+  if (!mic) return null;
+  const wantedCcy = currency ? currency.toUpperCase() : null;
+  const match = listings.find((l) => {
+    if (l.mic !== mic) return false;
+    if (!wantedCcy) return true;
+    return l.currency.toUpperCase() === wantedCcy;
+  });
+  return match ?? null;
+}
+
+const DIVERGENCE_THRESHOLD = 0.5;
+
+export function shouldRejectDivergentQuote(
+  oldPrice: number | null | undefined,
+  newPrice: number,
+  force: boolean,
+): boolean {
+  if (force) return false;
+  if (oldPrice == null) return false;
+  if (!Number.isFinite(oldPrice) || oldPrice <= 0) return false;
+  if (!Number.isFinite(newPrice) || newPrice <= 0) return false;
+  return Math.abs(newPrice - oldPrice) / oldPrice > DIVERGENCE_THRESHOLD;
+}
