@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ type PositionColKey =
   | "instrument"
   | "support"
   | "type"
+  | "operateur"
   | "qty"
   | "pru"
   | "pruGross"
@@ -50,10 +51,13 @@ type PositionColKey =
   | "pnlAnnualized"
   | "held";
 
+const POSITIONS_VISIBILITY_KEY = "gainvest:positions:visible-columns";
+
 const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "instrument", label: "Instrument", always: true },
   { key: "support", label: "Support", defaultVisible: true },
   { key: "type", label: "Type", defaultVisible: true },
+  { key: "operateur", label: "Opérateur", defaultVisible: true },
   { key: "qty", label: "Quantité", num: true, defaultVisible: true },
   { key: "pru", label: "PRU", num: true, defaultVisible: true },
   { key: "pruGross", label: "PRU brut", num: true, defaultVisible: false },
@@ -70,6 +74,22 @@ const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "held", label: "Durée de détention", num: true, defaultVisible: true },
 ];
 
+function migratePositionsVisibilityKey(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(POSITIONS_VISIBILITY_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return;
+    const persisted = parsed as Record<string, unknown>;
+    if (typeof persisted.operateur === "boolean") return;
+    persisted.operateur = true;
+    window.localStorage.setItem(POSITIONS_VISIBILITY_KEY, JSON.stringify(persisted));
+  } catch {
+    // ignore corrupted JSON, quota errors, private mode, etc.
+  }
+}
+
 export function PositionsTable({
   positions,
   withDividends = false,
@@ -79,10 +99,33 @@ export function PositionsTable({
   withDividends?: boolean;
   netOfFees?: boolean;
 }) {
+  useState(() => {
+    migratePositionsVisibilityKey();
+    return null;
+  });
+
+  const [search, setSearch] = useState("");
+
   const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
-    "gainvest:positions:visible-columns",
+    POSITIONS_VISIBILITY_KEY,
     POSITION_COLUMNS,
   );
+
+  const filteredBySearch = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return positions;
+    return positions.filter((p) =>
+      `${p.isin} ${p.instrumentName} ${p.broker ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [positions, search]);
+
+  const operatorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of positions) set.add(p.broker ?? "—");
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b, "fr"))
+      .map((v) => ({ label: v, value: v }));
+  }, [positions]);
 
   const columns = useMemo<TanstackColumnDef<Position>[]>(
     () => [
@@ -126,6 +169,14 @@ export function PositionsTable({
         cell: ({ row }) => (
           <Badge variant="outline">{labelAssetClass(row.original.assetClass)}</Badge>
         ),
+        enableSorting: false,
+        filterFn: "multiSelect",
+      },
+      {
+        id: "operateur",
+        accessorFn: (p) => p.broker ?? "—",
+        header: "Opérateur",
+        cell: ({ row }) => <span className="text-sm">{row.original.broker ?? "—"}</span>,
         enableSorting: false,
         filterFn: "multiSelect",
       },
@@ -335,13 +386,18 @@ export function PositionsTable({
   return (
     <DataTable
       columns={columns}
-      data={positions}
+      data={filteredBySearch}
       storageKey="gainvest:datatable:positions:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "valuation", desc: true }] }}
       toolbar={(table) => (
         <DataTableToolbar
           table={table}
+          search={{
+            placeholder: "Rechercher ISIN, nom, opérateur…",
+            value: search,
+            onChange: setSearch,
+          }}
           facetedFilters={[
             {
               columnId: "support",
@@ -353,6 +409,7 @@ export function PositionsTable({
               title: "Type",
               options: [...ASSET_CLASS_FACETED_OPTIONS],
             },
+            { columnId: "operateur", title: "Opérateur", options: operatorOptions },
           ]}
           trailing={
             <ColumnsPicker

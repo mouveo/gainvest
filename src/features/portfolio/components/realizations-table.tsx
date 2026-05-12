@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ type RealizationColKey =
   | "instrument"
   | "support"
   | "type"
+  | "operateur"
   | "qtySold"
   | "pruAtSale"
   | "salePrice"
@@ -35,11 +36,14 @@ type RealizationColKey =
   | "realizedTotal"
   | "xirr";
 
+const REALIZATIONS_VISIBILITY_KEY = "gainvest:realizations:visible-columns";
+
 const REALIZATION_COLUMNS: readonly PickerColumnDef<RealizationColKey>[] = [
   { key: "saleDate", label: "Date de vente", always: true },
   { key: "instrument", label: "Instrument", always: true },
   { key: "support", label: "Support", defaultVisible: true },
   { key: "type", label: "Type", defaultVisible: true },
+  { key: "operateur", label: "Opérateur", defaultVisible: true },
   { key: "qtySold", label: "Quantité vendue", num: true, defaultVisible: true },
   { key: "pruAtSale", label: "Prix d'achat / action", num: true, defaultVisible: true },
   { key: "salePrice", label: "Prix de vente / action", num: true, defaultVisible: true },
@@ -56,6 +60,22 @@ function salePricePerShare(r: PastRealization): number {
   return r.saleQty > 0 ? r.saleNet / r.saleQty : 0;
 }
 
+function migrateRealizationsVisibilityKey(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(REALIZATIONS_VISIBILITY_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return;
+    const persisted = parsed as Record<string, unknown>;
+    if (typeof persisted.operateur === "boolean") return;
+    persisted.operateur = true;
+    window.localStorage.setItem(REALIZATIONS_VISIBILITY_KEY, JSON.stringify(persisted));
+  } catch {
+    // ignore corrupted JSON, quota errors, private mode, etc.
+  }
+}
+
 export function RealizationsTable({
   realizations,
   withDividends,
@@ -65,10 +85,33 @@ export function RealizationsTable({
   withDividends: boolean;
   priceByIsin: Record<string, number>;
 }) {
+  useState(() => {
+    migrateRealizationsVisibilityKey();
+    return null;
+  });
+
+  const [search, setSearch] = useState("");
+
   const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
-    "gainvest:realizations:visible-columns",
+    REALIZATIONS_VISIBILITY_KEY,
     REALIZATION_COLUMNS,
   );
+
+  const filteredBySearch = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return realizations;
+    return realizations.filter((r) =>
+      `${r.isin} ${r.instrumentName} ${r.broker ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [realizations, search]);
+
+  const operatorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of realizations) set.add(r.broker ?? "—");
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b, "fr"))
+      .map((v) => ({ label: v, value: v }));
+  }, [realizations]);
 
   const columns = useMemo<TanstackColumnDef<PastRealization>[]>(
     () => [
@@ -110,6 +153,14 @@ export function RealizationsTable({
         cell: ({ row }) => (
           <Badge variant="outline">{labelAssetClass(row.original.assetClass)}</Badge>
         ),
+        enableSorting: false,
+        filterFn: "multiSelect",
+      },
+      {
+        id: "operateur",
+        accessorFn: (r) => r.broker ?? "—",
+        header: "Opérateur",
+        cell: ({ row }) => <span className="text-sm">{row.original.broker ?? "—"}</span>,
         enableSorting: false,
         filterFn: "multiSelect",
       },
@@ -300,13 +351,18 @@ export function RealizationsTable({
   return (
     <DataTable
       columns={columns}
-      data={realizations}
+      data={filteredBySearch}
       storageKey="gainvest:datatable:realizations:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "saleDate", desc: true }] }}
       toolbar={(table) => (
         <DataTableToolbar
           table={table}
+          search={{
+            placeholder: "Rechercher ISIN, nom, opérateur…",
+            value: search,
+            onChange: setSearch,
+          }}
           facetedFilters={[
             {
               columnId: "support",
@@ -318,6 +374,7 @@ export function RealizationsTable({
               title: "Type",
               options: [...ASSET_CLASS_FACETED_OPTIONS],
             },
+            { columnId: "operateur", title: "Opérateur", options: operatorOptions },
           ]}
           dateRangeFilters={[{ columnId: "saleDate", title: "Date de vente" }]}
           trailing={
