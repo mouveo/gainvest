@@ -1,11 +1,17 @@
-// Aggregate raw orders (buy/sell transactions) into positions, with PRU,
-// valuation, P&L and annualized return. Port of the standalone design's
-// aggregate() function — same formula, same shape.
+// Aggregate raw orders into positions by replaying transactions chronologically
+// on a per (isin, support) line. CUMP fongible: a partial sell consumes a
+// prorata share of past buy/dividend flows; the remaining lot keeps the rest.
 //
 // Inputs are *already filtered* to the current user via RLS.
 
-import { daysBetween, parseDate } from "./format";
+import { daysBetween } from "./format";
+import {
+  replayTransactions,
+  type ActivePosition,
+  type PastRealization,
+} from "./realize";
 import type { Support } from "./types";
+import { xirr, type Flow } from "./xirr";
 
 export type OrderRow = {
   id: string;
@@ -28,6 +34,8 @@ export type OrderRow = {
   support: Support;
 };
 
+export type TradableOrder = OrderRow & { quantity: number; price: number };
+
 export type Position = {
   key: string;
   isin: string;
@@ -40,8 +48,12 @@ export type Position = {
   currentPrice: number;
   valuation: number;
   invested: number;
+  // Capital P&L (price-only). Kept under the legacy field names for compat.
   pnl: number;
   pnlPct: number;
+  // pnlAnnualized used to be a (1+pnlPct)^(1/yearsHeld) compounding; it is now
+  // the capital XIRR derived from real-dated cash flows. Same field name for
+  // call-site compatibility.
   pnlAnnualized: number;
   meanDate: Date;
   daysHeld: number;
@@ -51,109 +63,91 @@ export type Position = {
   sellCount: number;
   totalFees: number;
   orders: TradableOrder[];
+  // New fields surfaced by the replay engine.
+  dividendsAttributed: number;
+  pnlCapital: number;
+  pnlTotal: number;
+  pnlPctCapital: number;
+  pnlPctTotal: number;
+  xirrCapital: number;
+  xirrTotal: number;
+  cashFlowsCapital: Flow[];
+  cashFlowsTotal: Flow[];
 };
 
-export type TradableOrder = OrderRow & { quantity: number; price: number };
+function activeToPosition(p: ActivePosition): Position {
+  return {
+    key: p.key,
+    isin: p.isin,
+    support: p.support,
+    instrumentName: p.instrumentName,
+    assetClass: p.assetClass,
+    currency: p.currency,
+    qty: p.qty,
+    pru: p.pru,
+    currentPrice: p.currentPrice,
+    valuation: p.valuation,
+    invested: p.invested,
+    pnl: p.pnlCapital,
+    pnlPct: p.pnlPctCapital,
+    pnlAnnualized: Number.isFinite(p.xirrCapital) ? p.xirrCapital : 0,
+    meanDate: p.firstBuyDate,
+    daysHeld: p.daysHeld,
+    yearsHeld: p.yearsHeld,
+    ordersCount: p.ordersCount,
+    buyCount: p.buyCount,
+    sellCount: p.sellCount,
+    totalFees: p.totalFees,
+    orders: p.orders,
+    dividendsAttributed: p.dividendsAttributed,
+    pnlCapital: p.pnlCapital,
+    pnlTotal: p.pnlTotal,
+    pnlPctCapital: p.pnlPctCapital,
+    pnlPctTotal: p.pnlPctTotal,
+    xirrCapital: p.xirrCapital,
+    xirrTotal: p.xirrTotal,
+    cashFlowsCapital: p.cashFlowsCapital,
+    cashFlowsTotal: p.cashFlowsTotal,
+  };
+}
+
+function byValuationDesc(a: Position, b: Position): number {
+  return b.valuation - a.valuation;
+}
 
 export function aggregate(
   orders: OrderRow[],
   priceByIsin: Record<string, number>,
   today: Date = new Date(),
 ): Position[] {
-  // Positions are derived from buy/sell only. Dividends and fees never affect
-  // PRU, quantity, valuation or position count.
-  const tradable = orders.filter(
-    (o): o is TradableOrder =>
-      (o.kind === "buy" || o.kind === "sell") && o.quantity != null && o.price != null,
-  );
+  const { positions } = replayTransactions(orders, priceByIsin, today);
+  return positions.map(activeToPosition).sort(byValuationDesc);
+}
 
-  const byKey = new Map<string, TradableOrder[]>();
-  for (const o of tradable) {
-    const key = `${o.isin}\x01${o.support}`;
-    const arr = byKey.get(key);
-    if (arr) arr.push(o);
-    else byKey.set(key, [o]);
-  }
-
-  const positions: Position[] = [];
-
-  for (const [key, ords] of byKey) {
-    let qty = 0;
-    let costBase = 0;
-    let proceedsFromSell = 0;
-    let weightedDateMs = 0;
-    let weightSum = 0;
-    let buyCount = 0;
-    let sellCount = 0;
-    let totalFees = 0;
-    const first = ords[0]!;
-
-    for (const o of ords) {
-      const gross = o.quantity * o.price;
-      if (o.kind === "buy") {
-        qty += o.quantity;
-        costBase += gross + (o.fees ?? 0);
-        const ms = parseDate(o.tradeDate).getTime();
-        weightedDateMs += ms * gross;
-        weightSum += gross;
-        buyCount += 1;
-      } else {
-        qty -= o.quantity;
-        proceedsFromSell += gross - (o.fees ?? 0);
-        sellCount += 1;
-      }
-      totalFees += o.fees ?? 0;
-    }
-
-    const pru = qty > 0 ? (costBase - proceedsFromSell) / qty : 0;
-    const currentPrice = priceByIsin[first.isin] ?? 0;
-    const valuation = qty * currentPrice;
-    const invested = costBase - proceedsFromSell;
-    const pnl = valuation - invested;
-    const pnlPct = invested > 0 ? pnl / invested : 0;
-
-    const meanDateMs = weightSum > 0 ? weightedDateMs / weightSum : today.getTime();
-    const meanDate = new Date(meanDateMs);
-    const days = Math.max(1, daysBetween(meanDate, today));
-    const yearsHeld = days / 365.25;
-
-    const pnlAnnualized = invested > 0 && pnlPct > -1 ? Math.pow(1 + pnlPct, 1 / yearsHeld) - 1 : 0;
-
-    positions.push({
-      key,
-      isin: first.isin,
-      support: first.support,
-      instrumentName: first.instrumentName,
-      assetClass: first.assetClass,
-      currency: first.currency,
-      qty,
-      pru,
-      currentPrice,
-      valuation,
-      invested,
-      pnl,
-      pnlPct,
-      pnlAnnualized,
-      meanDate,
-      daysHeld: Math.round(days),
-      yearsHeld,
-      ordersCount: ords.length,
-      buyCount,
-      sellCount,
-      totalFees,
-      orders: ords.slice().sort((a, b) => a.tradeDate.localeCompare(b.tradeDate)),
-    });
-  }
-
-  return positions.sort((a, b) => b.valuation - a.valuation);
+export function aggregateWithRealizations(
+  orders: OrderRow[],
+  priceByIsin: Record<string, number>,
+  today: Date = new Date(),
+): { positions: Position[]; realizations: PastRealization[] } {
+  const { positions, realizations } = replayTransactions(orders, priceByIsin, today);
+  return {
+    positions: positions.map(activeToPosition).sort(byValuationDesc),
+    realizations,
+  };
 }
 
 export type PortfolioTotals = {
   invested: number;
   valuation: number;
-  pnl: number;
+  pnl: number; // capital P&L (legacy)
+  pnlTotal: number;
   pnlPct: number;
+  pnlPctTotal: number;
+  // pnlAnnualized = xirrCapital, kept for call-site compatibility.
   pnlAnnualized: number;
+  xirrCapital: number;
+  xirrTotal: number;
+  dividendsTotal: number;
   yearsHeld: number;
   totalFees: number;
   lines: number;
@@ -162,28 +156,42 @@ export type PortfolioTotals = {
 export function computeTotals(positions: Position[], today: Date = new Date()): PortfolioTotals {
   let invested = 0;
   let valuation = 0;
-  let weightedDateMs = 0;
   let totalFees = 0;
+  let dividendsTotal = 0;
+  let weightedDateMs = 0;
+  const cfCapital: Flow[] = [];
+  const cfTotal: Flow[] = [];
 
   for (const p of positions) {
     invested += p.invested;
     valuation += p.valuation;
-    weightedDateMs += p.meanDate.getTime() * p.invested;
     totalFees += p.totalFees;
+    dividendsTotal += p.dividendsAttributed;
+    weightedDateMs += p.meanDate.getTime() * p.invested;
+    if (p.cashFlowsCapital) for (const f of p.cashFlowsCapital) cfCapital.push(f);
+    if (p.cashFlowsTotal) for (const f of p.cashFlowsTotal) cfTotal.push(f);
   }
 
   const pnl = valuation - invested;
+  const pnlTotal = valuation + dividendsTotal - invested;
   const pnlPct = invested > 0 ? pnl / invested : 0;
+  const pnlPctTotal = invested > 0 ? pnlTotal / invested : 0;
   const meanDateMs = invested > 0 ? weightedDateMs / invested : today.getTime();
   const yearsHeld = Math.max(0.01, daysBetween(new Date(meanDateMs), today) / 365.25);
-  const pnlAnnualized = pnlPct > -1 ? Math.pow(1 + pnlPct, 1 / yearsHeld) - 1 : 0;
+  const xirrCapital = xirr(cfCapital);
+  const xirrTotal = xirr(cfTotal);
 
   return {
     invested,
     valuation,
     pnl,
+    pnlTotal,
     pnlPct,
-    pnlAnnualized,
+    pnlPctTotal,
+    pnlAnnualized: Number.isFinite(xirrCapital) ? xirrCapital : 0,
+    xirrCapital,
+    xirrTotal,
+    dividendsTotal,
     yearsHeld,
     totalFees,
     lines: positions.length,
