@@ -393,6 +393,67 @@ export async function setInstrumentListing(
   return { ok: true };
 }
 
+export type SetBondMetadataResult = { ok: true } | { ok: false; error: string };
+
+export async function setBondMetadata(args: {
+  instrumentId: string;
+  couponRate: number;
+  maturityDate: string;
+  frequency: 1 | 2 | 4;
+}): Promise<SetBondMetadataResult> {
+  const { instrumentId, couponRate, maturityDate, frequency } = args;
+
+  if (!instrumentId) return { ok: false, error: "Instrument inconnu." };
+  if (!Number.isFinite(couponRate) || couponRate < 0 || couponRate >= 30) {
+    return { ok: false, error: "Coupon invalide (0 à 30 %)." };
+  }
+  if (frequency !== 1 && frequency !== 2 && frequency !== 4) {
+    return { ok: false, error: "Fréquence invalide (1, 2 ou 4)." };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(maturityDate)) {
+    return { ok: false, error: "Date de maturité invalide." };
+  }
+  const parsed = new Date(`${maturityDate}T00:00:00Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== maturityDate
+  ) {
+    return { ok: false, error: "Date de maturité invalide." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Non authentifié." };
+
+  // Mirror setInstrumentListing: only allow editing an instrument the user
+  // actually holds via at least one transaction. Stops random rewrites of
+  // the global instruments catalog.
+  const { data: txn, error: txnErr } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("instrument_id", instrumentId)
+    .limit(1)
+    .maybeSingle();
+  if (txnErr) return { ok: false, error: txnErr.message };
+  if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
+
+  const { error: updErr } = await supabase
+    .from("instruments")
+    .update({
+      bond_coupon_rate: couponRate,
+      bond_maturity_date: maturityDate,
+      bond_coupon_frequency: frequency,
+    })
+    .eq("id", instrumentId);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  revalidatePath("/portfolio");
+  return { ok: true };
+}
+
 export async function updateInstrumentPrice(isin: string, price: number): Promise<void> {
   if (!Number.isFinite(price) || price < 0) return;
   const supabase = await createClient();

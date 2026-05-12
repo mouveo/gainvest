@@ -55,6 +55,11 @@ export type OrderRow = {
   executionVenue: string | null;
   broker: string | null;
   support: Support;
+  // Bond-only metadata propagated from the instrument row. Null on non-bond
+  // or when the bond hasn't been backfilled yet.
+  bondCouponRate: number | null;
+  bondMaturityDate: string | null;
+  bondCouponFrequency: 1 | 2 | 4 | null;
 };
 
 export type TradableOrder = OrderRow & { quantity: number; price: number };
@@ -147,6 +152,13 @@ export type Position = {
   cashFlowsTotalNetFees: Flow[];
   xirrCapitalNetFees: number;
   xirrTotalNetFees: number;
+  // Bond-specific metadata + FX snapshot needed to render the bond detail
+  // modal (YTM, future coupons in EUR). `bondCouponFrequency` follows the
+  // DB CHECK constraint `IN (1, 2, 4)`. Null for non-bond/cash positions.
+  bondCouponRate: number | null;
+  bondMaturityDate: string | null;
+  bondCouponFrequency: 1 | 2 | 4 | null;
+  fxToEur: number;
 };
 
 function activeToPosition(p: ActivePosition): Position {
@@ -196,6 +208,10 @@ function activeToPosition(p: ActivePosition): Position {
     cashFlowsTotalNetFees: p.cashFlowsTotalNetFees,
     xirrCapitalNetFees: p.xirrCapitalNetFees,
     xirrTotalNetFees: p.xirrTotalNetFees,
+    bondCouponRate: p.bondCouponRate,
+    bondMaturityDate: p.bondMaturityDate,
+    bondCouponFrequency: p.bondCouponFrequency,
+    fxToEur: p.fxToEur,
   };
 }
 
