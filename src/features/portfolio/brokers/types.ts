@@ -1,4 +1,4 @@
-import type { Support } from "../types";
+import type { AssetClass, Support } from "../types";
 
 export type Market =
   | "euronext"
@@ -57,6 +57,13 @@ export type ParsedRow = {
   // Liquidation rows (BD) do not carry a quantity in the CSV — the import
   // action infers it from the user's stock at the row's date.
   inferQtyFromHoldings?: boolean;
+  // Asset class derived by the broker from its own categorization (IBKR
+  // assetCategory/subCategory). Used to fill in instruments when OpenFIGI
+  // returns nothing and to fix asset_class mismatches on existing rows.
+  assetClass?: AssetClass;
+  // Broker-side trade identifier — used inside the parser to correlate
+  // bond purchase accrued interest cash entries back to the originating buy.
+  tradeId?: string | null;
 };
 
 export type FileParseResult = { rows: ParsedRow[]; warnings: string[] };

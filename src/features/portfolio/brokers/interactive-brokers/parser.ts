@@ -57,6 +57,11 @@ export function parseIbkrFlexXml(
   const rows: ParsedRow[] = [];
   let lineNo = 1;
 
+  // Indexed by IBKR tradeID so we can fold a BOND `PURCHASE ACCRUED` cash
+  // entry back into its originating buy (capitalised cost basis, no synthetic
+  // interest row).
+  const buysByTradeId = new Map<string, ParsedRow>();
+
   const trades = toArray(stmt.Trades?.Trade).map(attrs);
   for (const t of trades) {
     const buySell = str(t.buySell).toUpperCase();
@@ -73,8 +78,10 @@ export function parseIbkrFlexXml(
     const feesNative = Math.abs(num(t.ibCommission));
     const symbol = str(t.symbol);
     const description = str(t.description) || symbol;
+    const assetClass = classifyIbkrAsset(str(t.assetCategory), str(t.subCategory));
+    const tradeId = str(t.tradeID) || null;
 
-    rows.push({
+    const row: ParsedRow = {
       rawLine: lineNo++,
       date: parseDate(str(t.tradeDate) || str(t.dateTime)),
       kind,
@@ -86,14 +93,22 @@ export function parseIbkrFlexXml(
       grossAmount: grossNative,
       price,
       needsAttention: false,
-      externalId: str(t.ibExecID) || str(t.transactionID) || null,
+      externalId: str(t.ibExecID) || str(t.transactionID) || tradeId || null,
       symbol,
       name: description,
       currency: nativeCurrency,
       fees: feesNative,
       fxRate: fx,
       broker: "Interactive Brokers",
-    });
+      assetClass,
+      tradeId,
+    };
+
+    rows.push(row);
+
+    if (kind === "buy" && tradeId) {
+      buysByTradeId.set(tradeId, row);
+    }
   }
 
   const cash = toArray(stmt.CashTransactions?.CashTransaction).map(attrs);
@@ -113,6 +128,29 @@ export function parseIbkrFlexXml(
     const isin = str(c.isin);
     const symbol = str(c.symbol) || null;
     const description = str(c.description) || rawType;
+
+    // BOND purchase accrued interest: a "Bond Interest Paid" entry with a
+    // negative amount and `PURCHASE ACCRUED` in the description, attached to
+    // the trade via tradeID. IBKR books it as cash interest, but it's really
+    // part of the buy's cost basis — capitalise it onto the buy and skip
+    // emitting an interest row (which would otherwise show up as negative
+    // coupon revenue).
+    const cashTradeId = str(c.tradeID) || null;
+    if (
+      rawType === "Bond Interest Paid" &&
+      amount < 0 &&
+      /PURCHASE ACCRUED/i.test(description) &&
+      cashTradeId
+    ) {
+      const buy = buysByTradeId.get(cashTradeId);
+      if (buy) {
+        // Amounts are kept in native currency on the parsed row; the buy's
+        // fxRate already maps the whole position to EUR downstream.
+        buy.grossAmount = (buy.grossAmount ?? 0) + grossNative;
+        buy.totalAmount = buy.totalAmount + grossNative;
+        continue;
+      }
+    }
     // Keep the IBKR raw type in `notes` so we can audit
     // "Broker Interest Received" vs "Bond Interest Paid" downstream.
     const notes = rawType ? `${rawType}${description ? ` — ${description}` : ""}` : description;
@@ -148,7 +186,6 @@ function parseDate(s: string): string {
   return s;
 }
 
-// Reserved for future use when we surface IBKR asset categories in the UI.
 export function classifyIbkrAsset(category: string, sub: string): AssetClass {
   if (category === "BOND") return "bond";
   if (sub === "ETF") return "etf";
