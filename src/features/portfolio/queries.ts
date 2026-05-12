@@ -2,7 +2,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 
-import { aggregate, type OrderRow, type Position } from "./aggregate";
+import { aggregateWithRealizations, type OrderRow, type Position } from "./aggregate";
+import type { PastRealization } from "./realize";
 import type { Support } from "./types";
 
 /**
@@ -176,14 +177,15 @@ async function getPricesUpdatedAt(orders: OrderRow[]): Promise<string | null> {
 export async function getPositions(): Promise<{
   orders: OrderRow[];
   positions: Position[];
+  realizations: PastRealization[];
   priceByIsin: Record<string, number>;
   pricesUpdatedAt: string | null;
 }> {
   const orders = await getOrders();
   const priceByIsin = await getCurrentPrices(orders);
   const pricesUpdatedAt = await getPricesUpdatedAt(orders);
-  const positions = aggregate(orders, priceByIsin);
-  return { orders, positions, priceByIsin, pricesUpdatedAt };
+  const { positions, realizations } = aggregateWithRealizations(orders, priceByIsin);
+  return { orders, positions, realizations, priceByIsin, pricesUpdatedAt };
 }
 
 /**
