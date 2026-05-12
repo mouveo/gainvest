@@ -33,7 +33,10 @@ import { ListingPicker } from "./listing-picker";
 import { MoneyCell } from "./money-cell";
 import {
   currentPriceCell,
+  holdingFeesCell,
   orderPriceCell,
+  pnlAnnualizedCell,
+  pnlPctCell,
   pruCell,
   pruGrossCell,
 } from "./positions-table.cells";
@@ -348,10 +351,10 @@ export function PositionsTable({
           <DataTableColumnHeader column={column} title="Frais de détention" align="right" />
         ),
         cell: ({ row }) => {
-          const v = row.original.holdingFees;
-          return v > 0.005 ? (
+          const cell = holdingFeesCell(row.original);
+          return cell.kind === "amount" ? (
             <div className="text-right">
-              <MoneyCell value={v} dp={2} />
+              <MoneyCell value={cell.value} dp={2} />
             </div>
           ) : (
             <div className="text-muted-foreground text-right font-mono tabular-nums">—</div>
@@ -389,10 +392,8 @@ export function PositionsTable({
       {
         id: "pnlPct",
         accessorFn: (p) => {
-          if (p.assetClass === "cash") return Number.NaN;
-          const base = withDividends ? p.pnlTotal : p.pnlCapital;
-          const adj = base - (netOfFees ? p.holdingFees : 0);
-          return p.invested > 0 ? adj / p.invested : 0;
+          const cell = pnlPctCell(p, { withDividends, netOfFees });
+          return cell.kind === "pct" ? cell.value : Number.NaN;
         },
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="PnL %" align="right" />
@@ -410,14 +411,8 @@ export function PositionsTable({
       {
         id: "pnlAnnualized",
         accessorFn: (p) => {
-          const v = netOfFees
-            ? withDividends
-              ? p.xirrTotalNetFees
-              : p.xirrCapitalNetFees
-            : withDividends
-              ? p.xirrTotal
-              : p.xirrCapital;
-          return Number.isFinite(v) ? v : Number.NaN;
+          const cell = pnlAnnualizedCell(p, { withDividends, netOfFees });
+          return cell.kind === "rate" ? cell.value : Number.NaN;
         },
         sortingFn: (a, b, columnId) => {
           const av = a.getValue<number>(columnId);

@@ -4,7 +4,10 @@ import type { Position } from "../aggregate";
 
 import {
   currentPriceCell,
+  holdingFeesCell,
   orderPriceCell,
+  pnlAnnualizedCell,
+  pnlPctCell,
   pruCell,
   pruGrossCell,
 } from "./positions-table.cells";
@@ -133,6 +136,114 @@ describe("currentPriceCell", () => {
 
   it("returns a dash for cash", () => {
     expect(currentPriceCell(pos({ assetClass: "cash" })).kind).toBe("dash");
+  });
+});
+
+describe("pnlAnnualizedCell", () => {
+  it("returns the XIRR rate for a cash row with a finite yield", () => {
+    const cell = pnlAnnualizedCell(
+      pos({
+        assetClass: "cash",
+        xirrCapital: 0.045,
+        xirrTotal: 0.045,
+        xirrCapitalNetFees: 0.045,
+        xirrTotalNetFees: 0.045,
+      }),
+      { withDividends: false, netOfFees: false },
+    );
+    expect(cell).toEqual({ kind: "rate", value: 0.045 });
+  });
+
+  it("returns a dash for a cash row whose XIRR is NaN", () => {
+    const cell = pnlAnnualizedCell(
+      pos({
+        assetClass: "cash",
+        xirrCapital: Number.NaN,
+        xirrTotal: Number.NaN,
+        xirrCapitalNetFees: Number.NaN,
+        xirrTotalNetFees: Number.NaN,
+      }),
+      { withDividends: false, netOfFees: false },
+    );
+    expect(cell.kind).toBe("dash");
+  });
+
+  it("picks xirrTotalNetFees when both toggles are on", () => {
+    const cell = pnlAnnualizedCell(
+      pos({
+        xirrCapital: 0.1,
+        xirrTotal: 0.2,
+        xirrCapitalNetFees: 0.05,
+        xirrTotalNetFees: 0.15,
+      }),
+      { withDividends: true, netOfFees: true },
+    );
+    expect(cell).toEqual({ kind: "rate", value: 0.15 });
+  });
+});
+
+describe("pnlPctCell", () => {
+  it("returns a dash for cash regardless of values", () => {
+    expect(
+      pnlPctCell(
+        pos({
+          assetClass: "cash",
+          pnlTotal: 50,
+          pnlCapital: 0,
+          invested: 1000,
+          holdingFees: 0,
+        }),
+        { withDividends: false, netOfFees: false },
+      ).kind,
+    ).toBe("dash");
+  });
+
+  it("returns the capital pnl ratio for a non-cash position", () => {
+    const cell = pnlPctCell(
+      pos({
+        assetClass: "etf",
+        pnlCapital: 100,
+        pnlTotal: 120,
+        invested: 1000,
+        holdingFees: 0,
+      }),
+      { withDividends: false, netOfFees: false },
+    );
+    expect(cell).toEqual({ kind: "pct", value: 0.1 });
+  });
+
+  it("subtracts holding fees when netOfFees is true", () => {
+    const cell = pnlPctCell(
+      pos({
+        assetClass: "etf",
+        pnlCapital: 100,
+        pnlTotal: 100,
+        invested: 1000,
+        holdingFees: 40,
+      }),
+      { withDividends: false, netOfFees: true },
+    );
+    expect(cell).toEqual({ kind: "pct", value: 0.06 });
+  });
+});
+
+describe("holdingFeesCell", () => {
+  it("returns the aggregated amount when above the cent threshold", () => {
+    expect(holdingFeesCell(pos({ holdingFees: 6.8 }))).toEqual({
+      kind: "amount",
+      value: 6.8,
+    });
+  });
+
+  it("returns a dash for sub-cent or zero values", () => {
+    expect(holdingFeesCell(pos({ holdingFees: 0 })).kind).toBe("dash");
+    expect(holdingFeesCell(pos({ holdingFees: 0.004 })).kind).toBe("dash");
+  });
+
+  it("surfaces the aggregated fees+taxes for a cash row", () => {
+    // Per LOT 1 the realize step feeds cash holdingFees with (cashFees + taxes).
+    const cell = holdingFeesCell(pos({ assetClass: "cash", holdingFees: 5 + 1.8 }));
+    expect(cell).toEqual({ kind: "amount", value: 6.8 });
   });
 });
 

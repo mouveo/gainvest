@@ -57,6 +57,64 @@ export function currentPriceCell(p: CurrentPriceInput): CurrentPriceRender {
   return { kind: "editable-eur", value: p.currentPrice };
 }
 
+// Annualized yield (XIRR-based). Cash rows used to be forced to "dash" — now
+// they surface their XIRR like every other position; the only "dash" path is
+// a non-finite rate (e.g. trivial cash pouch with one deposit and no time
+// elapsed, or an instrument line with degenerate flows).
+export type AnnualizedYieldCell = { kind: "dash" } | { kind: "rate"; value: number };
+
+type AnnualizedYieldInput = Pick<
+  Position,
+  "xirrCapital" | "xirrTotal" | "xirrCapitalNetFees" | "xirrTotalNetFees"
+>;
+
+export function pnlAnnualizedCell(
+  p: AnnualizedYieldInput,
+  opts: { withDividends: boolean; netOfFees: boolean },
+): AnnualizedYieldCell {
+  const v = opts.netOfFees
+    ? opts.withDividends
+      ? p.xirrTotalNetFees
+      : p.xirrCapitalNetFees
+    : opts.withDividends
+      ? p.xirrTotal
+      : p.xirrCapital;
+  return Number.isFinite(v) ? { kind: "rate", value: v } : { kind: "dash" };
+}
+
+// PnL % stays a dash for cash — a percent on a current balance has no
+// well-defined denominator (cash mode uses XIRR for the rate of return view).
+export type PnlPctCell = { kind: "dash" } | { kind: "pct"; value: number };
+
+type PnlPctInput = Pick<
+  Position,
+  "assetClass" | "pnlCapital" | "pnlTotal" | "holdingFees" | "invested"
+>;
+
+export function pnlPctCell(
+  p: PnlPctInput,
+  opts: { withDividends: boolean; netOfFees: boolean },
+): PnlPctCell {
+  if (p.assetClass === "cash") return { kind: "dash" };
+  const base = opts.withDividends ? p.pnlTotal : p.pnlCapital;
+  const adj = base - (opts.netOfFees ? p.holdingFees : 0);
+  const value = p.invested > 0 ? adj / p.invested : 0;
+  if (!Number.isFinite(value)) return { kind: "dash" };
+  return { kind: "pct", value };
+}
+
+// Custody / holding fees column. For cash rows, `holdingFees` is fed from
+// (cash fees + tax withholdings) via the realize step — so this column also
+// surfaces taxes on cash, which is intentional. Sub-cent values fall back to
+// a dash to avoid noise.
+export type HoldingFeesCell = { kind: "dash" } | { kind: "amount"; value: number };
+
+export function holdingFeesCell(p: Pick<Position, "holdingFees">): HoldingFeesCell {
+  return p.holdingFees > 0.005
+    ? { kind: "amount", value: p.holdingFees }
+    : { kind: "dash" };
+}
+
 export type OrderPriceCell =
   | { kind: "pctPar"; text: string }
   | { kind: "eur"; text: string };
