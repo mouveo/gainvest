@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { lookupIsin } from "@/lib/openfigi";
 import { createClient } from "@/lib/supabase/server";
 
+import type { BondMetadata } from "../bonds/parse-symbol";
 import { getBroker } from "../brokers/registry";
 import type { ParsedKind, ParsedRow } from "../brokers/types";
 import { getDefaultAccountId } from "../queries";
@@ -26,6 +27,9 @@ type InstrumentLite = {
   name: string;
   asset_class: string;
   currency: string;
+  bond_coupon_rate: number | null;
+  bond_maturity_date: string | null;
+  bond_coupon_frequency: number | null;
 };
 
 function round2(n: number): number {
@@ -201,6 +205,7 @@ export async function importBrokerOrders(
     symbol: string | null;
     currency: string | null;
     assetClass: AssetClass | null;
+    bondMetadata: BondMetadata | null;
   };
   const brokerMetaByIsin = new Map<string, BrokerMeta>();
   for (const r of valid) {
@@ -210,18 +215,22 @@ export async function importBrokerOrders(
       symbol: null,
       currency: null,
       assetClass: null,
+      bondMetadata: null,
     };
     existing.name = existing.name ?? r.name ?? null;
     existing.symbol = existing.symbol ?? r.symbol ?? null;
     existing.currency = existing.currency ?? r.currency ?? null;
     existing.assetClass = existing.assetClass ?? r.assetClass ?? null;
+    existing.bondMetadata = existing.bondMetadata ?? r.bondMetadata ?? null;
     brokerMetaByIsin.set(r.isin, existing);
   }
 
   if (isins.length > 0) {
     const { data, error } = await supabase
       .from("instruments")
-      .select("id, isin, name, asset_class, currency")
+      .select(
+        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency",
+      )
       .in("isin", isins);
     if (error) return { ok: false, error: error.message };
     for (const row of data ?? []) {
@@ -231,19 +240,41 @@ export async function importBrokerOrders(
 
   // For instruments already cached locally, reconcile asset_class with what
   // the broker says (e.g. a bond previously misclassified as equity by
-  // OpenFIGI fallback). The DB-side upsert below would otherwise never run
-  // for these, leaving the bad class in place.
+  // OpenFIGI fallback). Also fill bond_* columns when they are still NULL —
+  // manual edits already in DB are preserved.
   for (const isin of isins) {
     const cached = byIsin.get(isin);
     if (!cached) continue;
     const meta = brokerMetaByIsin.get(isin);
-    const brokerClass = meta?.assetClass;
-    if (!brokerClass || brokerClass === cached.asset_class) continue;
+    if (!meta) continue;
+    const patch: {
+      asset_class?: AssetClass;
+      bond_coupon_rate?: number;
+      bond_maturity_date?: string;
+      bond_coupon_frequency?: number;
+    } = {};
+    if (meta.assetClass && meta.assetClass !== cached.asset_class) {
+      patch.asset_class = meta.assetClass;
+    }
+    if (meta.bondMetadata) {
+      if (cached.bond_coupon_rate == null) {
+        patch.bond_coupon_rate = meta.bondMetadata.couponRate;
+      }
+      if (cached.bond_maturity_date == null) {
+        patch.bond_maturity_date = meta.bondMetadata.maturityDate;
+      }
+      if (cached.bond_coupon_frequency == null) {
+        patch.bond_coupon_frequency = meta.bondMetadata.frequency;
+      }
+    }
+    if (Object.keys(patch).length === 0) continue;
     const { data: updated, error: updErr } = await supabase
       .from("instruments")
-      .update({ asset_class: brokerClass })
+      .update(patch)
       .eq("id", cached.id)
-      .select("id, isin, name, asset_class, currency")
+      .select(
+        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency",
+      )
       .single();
     if (updErr || !updated) continue;
     byIsin.set(isin, updated);
@@ -259,6 +290,9 @@ export async function importBrokerOrders(
       asset_class: AssetClass;
       currency: string;
       country: string | null;
+      bond_coupon_rate?: number;
+      bond_maturity_date?: string;
+      bond_coupon_frequency?: number;
     } | null = null;
     if (meta) {
       insertPayload = {
@@ -285,10 +319,18 @@ export async function importBrokerOrders(
       }
     }
     if (!insertPayload) continue;
+    const brokerMeta = brokerMetaByIsin.get(isin);
+    if (insertPayload.asset_class === "bond" && brokerMeta?.bondMetadata) {
+      insertPayload.bond_coupon_rate = brokerMeta.bondMetadata.couponRate;
+      insertPayload.bond_maturity_date = brokerMeta.bondMetadata.maturityDate;
+      insertPayload.bond_coupon_frequency = brokerMeta.bondMetadata.frequency;
+    }
     const { data: upserted, error: upsertErr } = await supabase
       .from("instruments")
       .upsert(insertPayload, { onConflict: "symbol,mic" })
-      .select("id, isin, name, asset_class, currency")
+      .select(
+        "id, isin, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency",
+      )
       .single();
     if (upsertErr || !upserted) continue;
     byIsin.set(isin, upserted);

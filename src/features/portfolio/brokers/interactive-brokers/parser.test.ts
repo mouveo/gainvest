@@ -225,6 +225,65 @@ describe("parseIbkrFlexXml — native amounts + fxRate", () => {
     expect(etf.assetClass).toBe("etf");
   });
 
+  it("populates bondMetadata from the description on BOND trades", () => {
+    const xml = buildXml(`
+<Trades>
+  <Trade
+    buySell="BUY"
+    assetCategory="BOND"
+    subCategory="CORP"
+    isin="US023135CV68"
+    symbol="AMZN26"
+    description="AMZN 4.65 11/20/35"
+    currency="USD"
+    fxRateToBase="0.91"
+    quantity="10000"
+    tradePrice="98.5"
+    proceeds="-9850"
+    ibCommission="-2"
+    tradeDate="2024-06-01"
+    ibExecID="exec-bond-meta-1"
+  />
+</Trades>`);
+
+    const rows = parseIbkrFlexXml(xml, { support: "CTO" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.bondMetadata).toEqual({
+      couponRate: 4.65,
+      maturityDate: "2035-11-20",
+      frequency: 2,
+    });
+  });
+
+  it("falls back to the symbol when the description doesn't match the bond pattern", () => {
+    const xml = buildXml(`
+<Trades>
+  <Trade
+    buySell="BUY"
+    assetCategory="BOND"
+    subCategory="CORP"
+    isin="US023135CV68"
+    symbol="AMZN 4.65 11/20/35"
+    description="AMAZON CORP NOTES"
+    currency="USD"
+    fxRateToBase="0.91"
+    quantity="10000"
+    tradePrice="98.5"
+    proceeds="-9850"
+    ibCommission="-2"
+    tradeDate="2024-06-01"
+    ibExecID="exec-bond-meta-2"
+  />
+</Trades>`);
+
+    const rows = parseIbkrFlexXml(xml, { support: "CTO" });
+    expect(rows[0]!.bondMetadata).toEqual({
+      couponRate: 4.65,
+      maturityDate: "2035-11-20",
+      frequency: 2,
+    });
+  });
+
   it("maps Deposits/Withdrawals on amount sign", () => {
     const xml = buildXml(`
 <CashTransactions>

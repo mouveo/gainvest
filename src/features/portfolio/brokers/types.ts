@@ -1,3 +1,4 @@
+import type { BondMetadata } from "../bonds/parse-symbol";
 import type { AssetClass, Support } from "../types";
 
 export type Market =
@@ -64,6 +65,10 @@ export type ParsedRow = {
   // Broker-side trade identifier — used inside the parser to correlate
   // bond purchase accrued interest cash entries back to the originating buy.
   tradeId?: string | null;
+  // Coupon/maturity/frequency parsed from a bond description or symbol.
+  // Populated only for bond rows; consumed by the import action to fill
+  // `instruments.bond_*` columns.
+  bondMetadata?: BondMetadata;
 };
 
 export type FileParseResult = { rows: ParsedRow[]; warnings: string[] };
