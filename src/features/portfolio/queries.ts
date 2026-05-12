@@ -83,6 +83,7 @@ export async function getOrders(): Promise<OrderRow[]> {
       price: row.price == null ? null : Number(row.price),
       grossAmount: Number(row.gross_amount ?? 0),
       fees: Number(row.fees ?? 0) + Number(row.tax ?? 0),
+      notes: row.notes ?? null,
       executionVenue: row.execution_venue,
       broker: row.broker,
       support: row.support as Support,
