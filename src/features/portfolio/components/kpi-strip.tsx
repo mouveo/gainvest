@@ -33,6 +33,49 @@ export function KpiStrip(props: Props) {
   return <MovementsKpis {...props} />;
 }
 
+export type PositionsKpiCopy = {
+  investedLabel: string;
+  investedSub: string;
+  valuationLabel: string;
+  pnlLabel: string;
+  xirrLabel: string;
+  xirrSubLabel: string;
+};
+
+// Pure label builder — kept separate from the JSX so it can be unit-tested
+// without rendering. Branches on `totals.kpiMode` only (never on heuristics
+// like invested === valuation).
+export function getPositionsKpiCopy(
+  totals: PortfolioTotals,
+  opts: { withDividends: boolean; netOfFees: boolean },
+): PositionsKpiCopy {
+  if (totals.kpiMode === "cash") {
+    return {
+      investedLabel: "Solde cash courant",
+      investedSub: `${totals.lines} ligne(s) · frais & taxes cumulés ${fmtCcy(totals.holdingFeesTotal, 0)}`,
+      valuationLabel: "Valorisation EUR",
+      pnlLabel: "Gain net",
+      xirrLabel: "PnL annualisé",
+      xirrSubLabel: "Rendement annualisé cash",
+    };
+  }
+  const mwrBaseLabel = opts.withDividends ? "MWR · avec divs" : "MWR · capital seul";
+  const xirrSubLabel = opts.netOfFees ? `${mwrBaseLabel} · net frais` : mwrBaseLabel;
+  const investedSub =
+    `${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}` +
+    (totals.holdingFeesTotal > 0
+      ? ` · dont ${fmtCcy(totals.holdingFeesTotal, 0)} de droits de garde`
+      : "");
+  return {
+    investedLabel: "Capital investi",
+    investedSub,
+    valuationLabel: "Valorisation",
+    pnlLabel: "PnL latent",
+    xirrLabel: "PnL annualisé",
+    xirrSubLabel,
+  };
+}
+
 function PositionsKpis({
   totals,
   pricesUpdatedAt,
@@ -54,26 +97,20 @@ function PositionsKpis({
     : withDividends
       ? totals.xirrTotal
       : totals.xirrCapital;
-  const mwrBaseLabel = withDividends ? "MWR · avec divs" : "MWR · capital seul";
-  const mwrSubLabel = netOfFees ? `${mwrBaseLabel} · net frais` : mwrBaseLabel;
-  const investedSub =
-    `${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}` +
-    (totals.holdingFeesTotal > 0
-      ? ` · dont ${fmtCcy(totals.holdingFeesTotal, 0)} de droits de garde`
-      : "");
+  const copy = getPositionsKpiCopy(totals, { withDividends, netOfFees });
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Kpi label="Capital investi" value={fmtCcy(totals.invested, 0)} sub={investedSub} />
+      <Kpi label={copy.investedLabel} value={fmtCcy(totals.invested, 0)} sub={copy.investedSub} />
       <Kpi
-        label="Valorisation"
+        label={copy.valuationLabel}
         value={fmtCcy(totals.valuation, 0)}
         sub={
           pricesUpdatedAt ? `MAJ ${fmtRelativeMinutes(pricesUpdatedAt)}` : "Cours non rafraîchis"
         }
       />
       <Kpi
-        label="PnL latent"
+        label={copy.pnlLabel}
         value={fmtSignedCcy(pnlValue, 0)}
         valueClassName={
           pnlValue >= 0 ? "text-success" : pnlValue < 0 ? "text-danger" : undefined
@@ -85,7 +122,7 @@ function PositionsKpis({
         }
       />
       <Kpi
-        label="PnL annualisé"
+        label={copy.xirrLabel}
         value={Number.isFinite(xirrValue) ? fmtPct(xirrValue, 1) : "—"}
         valueClassName={
           !Number.isFinite(xirrValue)
@@ -94,7 +131,7 @@ function PositionsKpis({
               ? "text-success"
               : "text-danger"
         }
-        sub={mwrSubLabel}
+        sub={copy.xirrSubLabel}
       />
     </div>
   );

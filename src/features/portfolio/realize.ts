@@ -220,6 +220,12 @@ type CashState = {
   // this matches the V0 product expectation that cash tracking starts when
   // the user provides an initial balance.
   hasExplicitTransfer: boolean;
+  // Flows that move money in/out of the cash pouch from an external
+  // perspective (deposits, withdrawals, buys, sells, dividends/interest
+  // routed to instruments). Interest-without-ISIN, taxes and cash-only fees
+  // are deliberately excluded: they are organic yield/drag that shows up via
+  // the residual balance, so including them would double-count.
+  externalFlows: Flow[];
 };
 
 export function replayTransactions(
@@ -250,6 +256,7 @@ export function replayTransactions(
         flowsCount: 0,
         firstFlowDate: null,
         hasExplicitTransfer: false,
+        externalFlows: [],
       };
       cash.set(key, state);
     }
@@ -341,6 +348,12 @@ export function replayTransactions(
       }
       // Cash impact: native currency, fees included.
       applyCash(o, -(o.grossAmount + (o.fees ?? 0)));
+      // From the cash pouch's investment viewpoint: cash flowed OUT to the
+      // instrument, equivalent to a "withdrawal" → positive XIRR flow.
+      ensureCash(o).externalFlows.push({
+        date: o.tradeDate,
+        amount: grossEurVal + feesEurVal,
+      });
       continue;
     }
 
@@ -353,11 +366,18 @@ export function replayTransactions(
       const cashState = ensureCash(o);
 
       // Interest WITHOUT ISIN: pure cash event, accumulate the cash KPI and
-      // do NOT attribute to any instrument.
+      // do NOT attribute to any instrument. Excluded from externalFlows so
+      // it surfaces as organic cash yield via the residual balance.
       if (o.kind === "interest" && !o.isin) {
         cashState.interestReceivedEur += grossEurVal;
         continue;
       }
+      // Dividend/interest WITH ISIN: money lands on the instrument; from
+      // cash's viewpoint it's equivalent to an external deposit.
+      cashState.externalFlows.push({
+        date: o.tradeDate,
+        amount: -grossEurVal,
+      });
       // Dividend or interest WITH ISIN: attribute to the matching instrument
       // line(s). For interest with ISIN we explicitly do NOT increment the
       // cash KPI to avoid double-counting (cash received once, instrument
@@ -392,15 +412,27 @@ export function replayTransactions(
 
     if (o.kind === "deposit") {
       applyCash(o, o.grossAmount);
-      ensureCash(o).hasExplicitTransfer = true;
+      const cashState = ensureCash(o);
+      cashState.hasExplicitTransfer = true;
+      cashState.externalFlows.push({
+        date: o.tradeDate,
+        amount: -grossAmountEur(o),
+      });
       continue;
     }
     if (o.kind === "withdrawal") {
       applyCash(o, -o.grossAmount);
-      ensureCash(o).hasExplicitTransfer = true;
+      const cashState = ensureCash(o);
+      cashState.hasExplicitTransfer = true;
+      cashState.externalFlows.push({
+        date: o.tradeDate,
+        amount: grossAmountEur(o),
+      });
       continue;
     }
     if (o.kind === "tax") {
+      // Tax is intentionally excluded from externalFlows: it's organic drag
+      // on cash that shows up via the residual balance, not a transfer.
       applyCash(o, -o.grossAmount);
       ensureCash(o).taxPaidEur += grossAmountEur(o);
       continue;
@@ -410,6 +442,12 @@ export function replayTransactions(
       if (o.quantity == null || o.quantity <= 0 || o.price == null) continue;
       // Cash impact, regardless of whether the instrument line was found.
       applyCash(o, o.grossAmount - (o.fees ?? 0));
+      // Sale proceeds land on cash — equivalent to a "deposit" from the
+      // cash pouch's investment viewpoint → negative XIRR flow.
+      ensureCash(o).externalFlows.push({
+        date: o.tradeDate,
+        amount: -(grossAmountEur(o) - feesEur(o)),
+      });
 
       const line = lines.get(lineKey(o.isin, o.support, o.broker ?? null));
       if (!line || line.qty <= 0) continue;
@@ -653,16 +691,24 @@ export function replayTransactions(
   // Cash positions — one per (support, broker, currency) where the user has
   // explicitly recorded a transfer. Native balance × current FX = EUR
   // valuation; pnlTotal surfaces the cash-only net flows (interest minus fees
-  // & taxes that did not land on an instrument).
+  // & taxes that did not land on an instrument). The "totalFees" column on a
+  // cash row aggregates both cash-only fees AND tax withholdings — that's
+  // intentional so the user sees every drag on cash in a single place.
   for (const state of cash.values()) {
     if (!state.hasExplicitTransfer) continue;
     const fxToEur = fxByCurrency[state.currency] ?? (state.currency === "EUR" ? 1 : 1);
-    const valuationEur = state.balance * fxToEur;
+    const finalValue = state.balance * fxToEur;
     const pnlTotalCash =
       state.interestReceivedEur - state.feesPaidEur - state.taxPaidEur;
     const firstDateStr = state.firstFlowDate ?? todayStr;
     const firstDate = new Date(`${firstDateStr}T00:00:00`);
     const days = Math.max(1, (today.getTime() - firstDate.getTime()) / 86_400_000);
+    const flowsForXirr: Flow[] = [
+      ...state.externalFlows,
+      { date: todayStr, amount: finalValue },
+    ];
+    const yieldXirr = xirr(flowsForXirr);
+    const cashTotalFees = state.feesPaidEur + state.taxPaidEur;
 
     positions.push({
       key: state.key,
@@ -677,32 +723,32 @@ export function replayTransactions(
       currency: state.currency,
       qty: state.balance,
       pru: 1,
-      invested: valuationEur,
+      invested: finalValue,
       pruGross: 1,
-      investedGross: valuationEur,
+      investedGross: finalValue,
       pnlCapitalGross: 0,
       currentPrice: fxToEur,
       pruPctPar: null,
       currentPctPar: null,
-      valuation: valuationEur,
-      totalCost: valuationEur,
+      valuation: finalValue,
+      totalCost: finalValue,
       // For cash lines we surface the interest received in the "Dividendes"
       // column — the two are conceptually the same passive income.
       dividendsAttributed: state.interestReceivedEur,
-      totalFees: state.feesPaidEur,
+      totalFees: cashTotalFees,
       pnlCapital: 0,
       pnlTotal: pnlTotalCash,
       pnlPctCapital: 0,
       pnlPctTotal: 0,
-      xirrCapital: Number.NaN,
-      xirrTotal: Number.NaN,
-      cashFlowsCapital: [],
-      cashFlowsTotal: [],
-      holdingFeesAttributed: 0,
-      cashFlowsCapitalNetFees: [],
-      cashFlowsTotalNetFees: [],
-      xirrCapitalNetFees: Number.NaN,
-      xirrTotalNetFees: Number.NaN,
+      xirrCapital: yieldXirr,
+      xirrTotal: yieldXirr,
+      cashFlowsCapital: flowsForXirr,
+      cashFlowsTotal: flowsForXirr,
+      holdingFeesAttributed: cashTotalFees,
+      cashFlowsCapitalNetFees: flowsForXirr,
+      cashFlowsTotalNetFees: flowsForXirr,
+      xirrCapitalNetFees: yieldXirr,
+      xirrTotalNetFees: yieldXirr,
       firstBuyDate: firstDate,
       daysHeld: Math.round(days),
       yearsHeld: days / 365.25,

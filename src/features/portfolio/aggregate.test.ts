@@ -569,6 +569,93 @@ describe("aggregate", () => {
     expect(totals.pnlPct).toBeCloseTo(0.1, 6);
     // XIRR derived from instrument flows only.
     expect(Number.isFinite(totals.xirrCapital)).toBe(true);
+    // Mixed view stays on the instruments aggregation rule.
+    expect(totals.kpiMode).toBe("instruments");
+  });
+
+  it("computeTotals switches to cash mode when every position is cash", () => {
+    // Two cash pouches: deposit 10000 → buy 4000 → +50 dividend with ISIN routed
+    // back through cash. Balance after buy = 6050 (but dividend is from a
+    // separate ISIN that has no instrument line, so it won't surface; keep it
+    // simple: just deposit and let the cash row stand alone).
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep-1",
+        kind: "deposit",
+        grossAmount: 8000,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+        tradeDate: "2024-05-12",
+      }),
+      makeOrder({
+        id: "dep-2",
+        kind: "deposit",
+        grossAmount: 2000,
+        quantity: null,
+        price: null,
+        broker: "Interactive Brokers",
+        tradeDate: "2024-05-12",
+      }),
+      makeOrder({
+        id: "int-1",
+        kind: "interest",
+        isin: "",
+        grossAmount: 50,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+        tradeDate: "2024-11-01",
+      }),
+      makeOrder({
+        id: "tax-1",
+        kind: "tax",
+        isin: "",
+        grossAmount: 5,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+        tradeDate: "2024-12-01",
+      }),
+    ];
+
+    const today = new Date("2026-05-12T00:00:00Z");
+    const positions = aggregate(orders, {}, today);
+    const totals = computeTotals(positions, today);
+
+    // Sanity: only cash positions.
+    expect(positions.every((p) => p.assetClass === "cash")).toBe(true);
+    expect(totals.kpiMode).toBe("cash");
+    // Valuation = balance Bourse Direct (8000 + 50 - 5 = 8045) + IBKR (2000).
+    expect(totals.valuation).toBeCloseTo(10045, 6);
+    expect(totals.invested).toBeCloseTo(10045, 6); // proxy of current balance
+    // PnL = Σ pnlTotal cash = (50 - 5) + 0 = 45.
+    expect(totals.pnl).toBeCloseTo(45, 6);
+    expect(totals.pnlTotal).toBeCloseTo(45, 6);
+    expect(totals.pnlPct).toBeCloseTo(45 / 10045, 6);
+    expect(totals.pnlPctTotal).toBe(totals.pnlPct);
+    // Fees aggregate cash fees+taxes; dividendsTotal stays at 0 in cash mode.
+    expect(totals.totalFees).toBeCloseTo(5, 6);
+    expect(totals.dividendsTotal).toBe(0);
+    expect(totals.yearsHeld).toBe(0);
+    // XIRR derived from concatenated flows; expect a finite positive yield.
+    expect(Number.isFinite(totals.xirrCapital)).toBe(true);
+    expect(totals.xirrCapital).toBeGreaterThan(0);
+    expect(totals.xirrTotal).toBe(totals.xirrCapital);
+    expect(totals.xirrCapitalNetFees).toBe(totals.xirrCapital);
+    expect(totals.xirrTotalNetFees).toBe(totals.xirrCapital);
+  });
+
+  it("computeTotals returns zeros and kpiMode=instruments on an empty position list", () => {
+    const totals = computeTotals([], new Date("2026-05-12T00:00:00Z"));
+    expect(totals.lines).toBe(0);
+    expect(totals.invested).toBe(0);
+    expect(totals.valuation).toBe(0);
+    expect(totals.pnl).toBe(0);
+    expect(totals.pnlTotal).toBe(0);
+    expect(totals.pnlPct).toBe(0);
+    expect(totals.pnlPctTotal).toBe(0);
+    expect(totals.kpiMode).toBe("instruments");
   });
 
   it("computeTotals dividendsTotal excludes cash interest", () => {

@@ -265,6 +265,12 @@ export type PortfolioTotals = {
   yearsHeld: number;
   totalFees: number;
   lines: number;
+  // Signals which aggregation rule produced these totals. `"instruments"` is
+  // the default (and the mixed case): cash is excluded from invested/P&L/XIRR.
+  // `"cash"` is set when the user filters down to cash-only — KPIs then come
+  // from the cash flows themselves (deposits, withdrawals, buys, sells,
+  // dividends/interest routed to instruments).
+  kpiMode: "instruments" | "cash";
 };
 
 export type RealizationTotals = {
@@ -381,6 +387,48 @@ export function computeMovementTotals(orders: OrderRow[]): MovementTotals {
 }
 
 export function computeTotals(positions: Position[], today: Date = new Date()): PortfolioTotals {
+  // Cash-only view (e.g. user filters Type=Liquidités): the "instruments"
+  // aggregation rule would zero out every KPI (invested = 0, no flows). Fall
+  // back to a cash-flow-driven view so the row stays informative.
+  const allCash =
+    positions.length > 0 && positions.every((p) => p.assetClass === "cash");
+  if (allCash) {
+    let valuation = 0;
+    let pnlSum = 0;
+    let totalFees = 0;
+    let holdingFeesTotal = 0;
+    const flowsAll: Flow[] = [];
+    for (const p of positions) {
+      valuation += p.valuation;
+      pnlSum += p.pnlTotal;
+      totalFees += p.totalFees;
+      holdingFeesTotal += p.holdingFees;
+      if (p.cashFlowsCapital) for (const f of p.cashFlowsCapital) flowsAll.push(f);
+    }
+    const invested = valuation; // proxy of current balance — see note above
+    const pnlPct = invested > 0 ? pnlSum / invested : 0;
+    const xirrCash = xirr(flowsAll);
+    return {
+      invested,
+      valuation,
+      pnl: pnlSum,
+      pnlTotal: pnlSum,
+      pnlPct,
+      pnlPctTotal: pnlPct,
+      pnlAnnualized: Number.isFinite(xirrCash) ? xirrCash : 0,
+      xirrCapital: xirrCash,
+      xirrTotal: xirrCash,
+      xirrCapitalNetFees: xirrCash,
+      xirrTotalNetFees: xirrCash,
+      dividendsTotal: 0,
+      holdingFeesTotal,
+      yearsHeld: 0,
+      totalFees,
+      lines: positions.length,
+      kpiMode: "cash",
+    };
+  }
+
   // Cash positions count toward total valuation and the line count, but they
   // never feed performance KPIs — a deposit is not a P&L event, so it must
   // not dilute % returns, XIRR, or "invested capital".
@@ -450,5 +498,6 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     yearsHeld,
     totalFees,
     lines: positions.length,
+    kpiMode: "instruments",
   };
 }
