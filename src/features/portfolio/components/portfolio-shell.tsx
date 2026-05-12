@@ -46,9 +46,17 @@ export function PortfolioShell({
   const [netOfFees, setNetOfFees] = useNetOfFeesMode();
   // Cash positions carry synthetic CASH-* pseudo-ISINs — they have no place
   // in the order autocomplete (you don't "buy" cash from the order sheet).
-  const knownIsins = positions
-    .filter((p) => p.assetClass !== "cash")
-    .map((p) => ({ isin: p.isin, name: p.instrumentName }));
+  // Positions sont émises par (isin, support, broker) depuis Plan L, donc un
+  // même ISIN détenu chez 2 brokers apparaît 2 fois ici. On déduplique par
+  // ISIN pour ne pas casser les keys React de l'autocomplete.
+  const knownIsins = useMemo(() => {
+    const seen = new Map<string, { isin: string; name: string }>();
+    for (const p of positions) {
+      if (p.assetClass === "cash") continue;
+      if (!seen.has(p.isin)) seen.set(p.isin, { isin: p.isin, name: p.instrumentName });
+    }
+    return Array.from(seen.values());
+  }, [positions]);
 
   const [visiblePositions, setVisiblePositions] = useState(positions);
   const [visibleRealizations, setVisibleRealizations] = useState(realizations);
