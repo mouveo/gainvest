@@ -53,6 +53,7 @@ export type DataTableProps<TData, TValue> = {
   onColumnVisibilityChange?: OnChangeFn<VisibilityState>;
   pageSizeOptions?: number[];
   className?: string;
+  onVisibleRowsChange?: (rows: TData[]) => void;
 };
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -69,6 +70,7 @@ export function DataTable<TData, TValue>({
   onColumnVisibilityChange,
   pageSizeOptions,
   className,
+  onVisibleRowsChange,
 }: DataTableProps<TData, TValue>) {
   // SSR-safe: initialize with the props/defaults so the first server-rendered
   // HTML matches the first client render. Persisted state from localStorage
@@ -131,7 +133,17 @@ export function DataTable<TData, TValue>({
 
   const headerGroups = table.getHeaderGroups();
   const rows = table.getRowModel().rows;
+  const filteredRows = table.getFilteredRowModel().rows;
   const totalLeafColumns = table.getAllLeafColumns().filter((c) => c.getIsVisible()).length;
+
+  const lastVisibleSignatureRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!onVisibleRowsChange) return;
+    const signature = filteredRows.map((row) => row.id).join("");
+    if (signature === lastVisibleSignatureRef.current) return;
+    lastVisibleSignatureRef.current = signature;
+    onVisibleRowsChange(filteredRows.map((row) => row.original));
+  }, [filteredRows, onVisibleRowsChange]);
 
   return (
     <div className={cn("flex w-full flex-col gap-2", className)}>

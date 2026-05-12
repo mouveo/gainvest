@@ -1,10 +1,39 @@
 import { Card, CardContent } from "@/components/ui/card";
 
-import type { PortfolioTotals } from "../aggregate";
+import type { MovementTotals, PortfolioTotals, RealizationTotals } from "../aggregate";
 import { fmtCcy, fmtSignedCcy, fmtPct } from "../format";
 import { DeltaPill } from "./delta-pill";
 
-export function KpiStrip({
+type Props =
+  | {
+      view: "positions";
+      totals: PortfolioTotals;
+      pricesUpdatedAt: string | null;
+      withDividends?: boolean;
+      netOfFees?: boolean;
+    }
+  | {
+      view: "realizations";
+      totals: RealizationTotals;
+      withDividends?: boolean;
+      netOfFees?: boolean;
+    }
+  | {
+      view: "movements";
+      totals: MovementTotals;
+    };
+
+export function KpiStrip(props: Props) {
+  if (props.view === "positions") {
+    return <PositionsKpis {...props} />;
+  }
+  if (props.view === "realizations") {
+    return <RealizationsKpis {...props} />;
+  }
+  return <MovementsKpis {...props} />;
+}
+
+function PositionsKpis({
   totals,
   pricesUpdatedAt,
   withDividends = false,
@@ -67,6 +96,85 @@ export function KpiStrip({
         }
         sub={mwrSubLabel}
       />
+    </div>
+  );
+}
+
+function RealizationsKpis({
+  totals,
+  withDividends = false,
+  netOfFees = false,
+}: {
+  totals: RealizationTotals;
+  withDividends?: boolean;
+  netOfFees?: boolean;
+}) {
+  const pnlValue = withDividends ? totals.pnlTotal : totals.pnlCapital;
+  const xirrValue = netOfFees
+    ? withDividends
+      ? totals.xirrTotalNetFees
+      : totals.xirrCapitalNetFees
+    : withDividends
+      ? totals.xirrTotal
+      : totals.xirrCapital;
+  const xirrBaseLabel = withDividends ? "XIRR · avec divs" : "XIRR · capital seul";
+  const xirrSubLabel = netOfFees ? `${xirrBaseLabel} · net frais` : xirrBaseLabel;
+  const countSub = `${totals.count} réalisation${totals.count > 1 ? "s" : ""}`;
+  const pnlPct = totals.costBasis > 0 ? pnlValue / totals.costBasis : 0;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Kpi
+        label="Capital récupéré"
+        value={fmtCcy(totals.capitalRecovered, 0)}
+        sub={countSub}
+      />
+      <Kpi
+        label="Coût des ventes"
+        value={fmtCcy(totals.costBasis, 0)}
+        sub="Base de coût cédée"
+      />
+      <Kpi
+        label="PnL réalisé"
+        value={fmtSignedCcy(pnlValue, 0)}
+        valueClassName={
+          pnlValue >= 0 ? "text-success" : pnlValue < 0 ? "text-danger" : undefined
+        }
+        sub={
+          <span className="inline-flex items-center gap-1">
+            <DeltaPill value={pnlPct} /> total
+          </span>
+        }
+      />
+      <Kpi
+        label="XIRR réalisé"
+        value={Number.isFinite(xirrValue) ? fmtPct(xirrValue, 1) : "—"}
+        valueClassName={
+          !Number.isFinite(xirrValue)
+            ? "text-muted-foreground"
+            : xirrValue >= 0
+              ? "text-success"
+              : "text-danger"
+        }
+        sub={xirrSubLabel}
+      />
+    </div>
+  );
+}
+
+function MovementsKpis({ totals }: { totals: MovementTotals }) {
+  const countSub = `${totals.count} mouvement${totals.count > 1 ? "s" : ""}`;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Kpi label="Total achats" value={fmtCcy(totals.totalBuys, 0)} sub={countSub} />
+      <Kpi label="Total ventes" value={fmtCcy(totals.totalSells, 0)} sub="Brut hors frais" />
+      <Kpi
+        label="Dividendes encaissés"
+        value={fmtCcy(totals.dividendsReceived, 0)}
+        sub="Brut avant fiscalité"
+      />
+      <Kpi label="Frais payés" value={fmtCcy(totals.feesPaid, 0)} sub="Commissions + droits de garde" />
     </div>
   );
 }

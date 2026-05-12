@@ -190,6 +190,96 @@ export type PortfolioTotals = {
   lines: number;
 };
 
+export type RealizationTotals = {
+  count: number;
+  capitalRecovered: number;
+  costBasis: number;
+  pnlCapital: number;
+  pnlTotal: number;
+  xirrCapital: number;
+  xirrTotal: number;
+  xirrCapitalNetFees: number;
+  xirrTotalNetFees: number;
+};
+
+type XirrKey =
+  | "xirrCapital"
+  | "xirrTotal"
+  | "xirrCapitalNetFees"
+  | "xirrTotalNetFees";
+
+function weightedXirr(reals: PastRealization[], key: XirrKey): number {
+  let weighted = 0;
+  let totalWeight = 0;
+  for (const r of reals) {
+    const rate = r[key];
+    if (!Number.isFinite(rate)) continue;
+    if (r.costBasis <= 0) continue;
+    weighted += rate * r.costBasis;
+    totalWeight += r.costBasis;
+  }
+  return totalWeight > 0 ? weighted / totalWeight : Number.NaN;
+}
+
+export function computeRealizationTotals(reals: PastRealization[]): RealizationTotals {
+  let capitalRecovered = 0;
+  let costBasis = 0;
+  let pnlCapital = 0;
+  let pnlTotal = 0;
+  for (const r of reals) {
+    capitalRecovered += r.saleNet;
+    costBasis += r.costBasis;
+    pnlCapital += r.pnlCapital;
+    pnlTotal += r.pnlTotal;
+  }
+  return {
+    count: reals.length,
+    capitalRecovered,
+    costBasis,
+    pnlCapital,
+    pnlTotal,
+    xirrCapital: weightedXirr(reals, "xirrCapital"),
+    xirrTotal: weightedXirr(reals, "xirrTotal"),
+    xirrCapitalNetFees: weightedXirr(reals, "xirrCapitalNetFees"),
+    xirrTotalNetFees: weightedXirr(reals, "xirrTotalNetFees"),
+  };
+}
+
+export type MovementTotals = {
+  count: number;
+  totalBuys: number;
+  totalSells: number;
+  dividendsReceived: number;
+  feesPaid: number;
+};
+
+export function computeMovementTotals(orders: OrderRow[]): MovementTotals {
+  let totalBuys = 0;
+  let totalSells = 0;
+  let dividendsReceived = 0;
+  let feesPaid = 0;
+  for (const o of orders) {
+    if (o.kind === "buy") {
+      totalBuys += o.grossAmount;
+      feesPaid += o.fees;
+    } else if (o.kind === "sell") {
+      totalSells += o.grossAmount;
+      feesPaid += o.fees;
+    } else if (o.kind === "dividend") {
+      dividendsReceived += o.grossAmount;
+    } else if (o.kind === "fee") {
+      feesPaid += o.grossAmount;
+    }
+  }
+  return {
+    count: orders.length,
+    totalBuys,
+    totalSells,
+    dividendsReceived,
+    feesPaid,
+  };
+}
+
 export function computeTotals(positions: Position[], today: Date = new Date()): PortfolioTotals {
   let invested = 0;
   let valuation = 0;

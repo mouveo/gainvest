@@ -79,11 +79,15 @@ function migrateRealizationsVisibilityKey(): void {
 export function RealizationsTable({
   realizations,
   withDividends,
+  netOfFees,
   priceByIsin,
+  onVisibleRowsChange,
 }: {
   realizations: PastRealization[];
   withDividends: boolean;
+  netOfFees: boolean;
   priceByIsin: Record<string, number>;
+  onVisibleRowsChange?: (rows: PastRealization[]) => void;
 }) {
   useState(() => {
     migrateRealizationsVisibilityKey();
@@ -315,7 +319,13 @@ export function RealizationsTable({
       {
         id: "xirr",
         accessorFn: (r) => {
-          const v = withDividends ? r.xirrTotal : r.xirrCapital;
+          const v = netOfFees
+            ? withDividends
+              ? r.xirrTotalNetFees
+              : r.xirrCapitalNetFees
+            : withDividends
+              ? r.xirrTotal
+              : r.xirrCapital;
           return Number.isFinite(v) ? v : Number.NaN;
         },
         header: ({ column }) => <DataTableColumnHeader column={column} title="XIRR" />,
@@ -341,7 +351,7 @@ export function RealizationsTable({
         },
       },
     ],
-    [withDividends, priceByIsin],
+    [withDividends, netOfFees, priceByIsin],
   );
 
   if (realizations.length === 0) {
@@ -355,6 +365,7 @@ export function RealizationsTable({
       storageKey="gainvest:datatable:realizations:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "saleDate", desc: true }] }}
+      onVisibleRowsChange={onVisibleRowsChange}
       toolbar={(table) => (
         <DataTableToolbar
           table={table}
