@@ -386,7 +386,11 @@ export function ImportSheet() {
                           className="text-right font-mono text-xs whitespace-nowrap tabular-nums"
                           title={r.computedFees?.rationale ?? ""}
                         >
-                          {r.computedFees ? fmtCcy(r.computedFees.total, 2) : "—"}
+                          {r.computedFees
+                            ? fmtCcy(r.computedFees.total, 2)
+                            : r.fees != null && r.fees > 0
+                              ? fmtCcy(r.fees, 2)
+                              : "—"}
                         </TableCell>
                       </TableRow>
                     ))}
