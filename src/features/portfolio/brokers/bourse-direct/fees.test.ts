@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  computeBourseDirectFees,
-  solveBourseDirectGrossFromTotal,
-} from "./fees";
+import { computeBourseDirectFees, solveBourseDirectGrossFromTotal } from "./fees";
 
 describe("computeBourseDirectFees — Euronext brackets", () => {
   it("uses 0,99 € for gross ≤ 500 €", () => {

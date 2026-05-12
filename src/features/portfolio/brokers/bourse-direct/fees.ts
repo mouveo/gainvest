@@ -146,16 +146,16 @@ function brokersForMarket(market: Market): BracketFormula[] {
           minFee: OTHER_MIN,
           gMin: 0,
           gMax: Infinity,
-          label: market === "borsa-italiana" ? "Borsa Italiana 0,48 % (min 41,90 €)" : "Autres 0,48 % (min 41,90 €)",
+          label:
+            market === "borsa-italiana"
+              ? "Borsa Italiana 0,48 % (min 41,90 €)"
+              : "Autres 0,48 % (min 41,90 €)",
         },
       ];
   }
 }
 
-function brokerageRaw(
-  gross: number,
-  market: Market,
-): { fee: number; tierLabel: string } {
+function brokerageRaw(gross: number, market: Market): { fee: number; tierLabel: string } {
   const brackets = brokersForMarket(market);
   for (const b of brackets) {
     if (gross > b.gMin && gross <= b.gMax) {

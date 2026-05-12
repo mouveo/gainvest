@@ -27,23 +27,24 @@ describe("isValidIsin", () => {
 
 describe("lookupIsin", () => {
   it("returns equity / USD for an Apple-like FIGI payload", async () => {
-    mockFetch(async () =>
-      new Response(
-        JSON.stringify([
-          {
-            data: [
-              {
-                name: "APPLE INC",
-                ticker: "AAPL",
-                securityType: "Common Stock",
-                securityType2: "Common Stock",
-                exchCode: "US",
-              },
-            ],
-          },
-        ]),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+    mockFetch(
+      async () =>
+        new Response(
+          JSON.stringify([
+            {
+              data: [
+                {
+                  name: "APPLE INC",
+                  ticker: "AAPL",
+                  securityType: "Common Stock",
+                  securityType2: "Common Stock",
+                  exchCode: "US",
+                },
+              ],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
     );
 
     const result = await lookupIsin("US0378331005");
@@ -58,11 +59,12 @@ describe("lookupIsin", () => {
   });
 
   it("returns null when payload is missing data", async () => {
-    mockFetch(async () =>
-      new Response(JSON.stringify([{ warning: "No identifier found." }]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify([{ warning: "No identifier found." }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
 
     expect(await lookupIsin("US0378331005")).toBeNull();

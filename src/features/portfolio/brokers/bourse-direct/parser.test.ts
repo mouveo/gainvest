@@ -102,11 +102,7 @@ describe("parseBourseDirectCsv", () => {
   });
 
   it("handles CRLF line endings", () => {
-    const text =
-      HEADER +
-      "\r\n" +
-      '5/10/2022,Frais,,Droits de garde 2022 T3,,"  4,03 € "' +
-      "\r\n";
+    const text = HEADER + "\r\n" + '5/10/2022,Frais,,Droits de garde 2022 T3,,"  4,03 € "' + "\r\n";
     const rows = parseBourseDirectCsv(text, { support: "CTO" });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.kind).toBe("fee");

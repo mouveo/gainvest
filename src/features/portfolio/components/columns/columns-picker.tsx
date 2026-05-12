@@ -57,9 +57,7 @@ export function ColumnsPicker<K extends string>({
                   onChange={() => onToggle(c.key)}
                 />
                 <span className="flex-1">{c.label}</span>
-                {disabled ? (
-                  <span className="text-muted-foreground text-xs">requis</span>
-                ) : null}
+                {disabled ? <span className="text-muted-foreground text-xs">requis</span> : null}
               </label>
             );
           })}

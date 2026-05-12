@@ -10,13 +10,7 @@ const CLASS: Record<Support, string> = {
   AV: "bg-success/10 text-success border-success/30",
 };
 
-export function SupportTag({
-  support,
-  className,
-}: {
-  support: Support;
-  className?: string;
-}) {
+export function SupportTag({ support, className }: { support: Support; className?: string }) {
   return (
     <span
       className={cn(

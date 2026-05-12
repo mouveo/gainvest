@@ -111,10 +111,7 @@ function normalizeFields(fields: string[]): string[] {
   return [date!, quoi!, isin!, description, qte, montant];
 }
 
-export function parseBourseDirectCsv(
-  csvText: string,
-  options: { support: Support },
-): ParsedRow[] {
+export function parseBourseDirectCsv(csvText: string, options: { support: Support }): ParsedRow[] {
   const lines = csvText.replace(/\r\n/g, "\n").split("\n");
   const out: ParsedRow[] = [];
 
