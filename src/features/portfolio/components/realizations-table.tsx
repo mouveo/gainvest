@@ -79,10 +79,12 @@ function migrateRealizationsVisibilityKey(): void {
 export function RealizationsTable({
   realizations,
   withDividends,
+  netOfFees,
   priceByIsin,
 }: {
   realizations: PastRealization[];
   withDividends: boolean;
+  netOfFees: boolean;
   priceByIsin: Record<string, number>;
 }) {
   useState(() => {
@@ -315,7 +317,13 @@ export function RealizationsTable({
       {
         id: "xirr",
         accessorFn: (r) => {
-          const v = withDividends ? r.xirrTotal : r.xirrCapital;
+          const v = netOfFees
+            ? withDividends
+              ? r.xirrTotalNetFees
+              : r.xirrCapitalNetFees
+            : withDividends
+              ? r.xirrTotal
+              : r.xirrCapital;
           return Number.isFinite(v) ? v : Number.NaN;
         },
         header: ({ column }) => <DataTableColumnHeader column={column} title="XIRR" />,
@@ -341,7 +349,7 @@ export function RealizationsTable({
         },
       },
     ],
-    [withDividends, priceByIsin],
+    [withDividends, netOfFees, priceByIsin],
   );
 
   if (realizations.length === 0) {

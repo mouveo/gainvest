@@ -103,6 +103,7 @@ export function PortfolioShell({
           <RealizationsTable
             realizations={realizations}
             withDividends={withDividends}
+            netOfFees={netOfFees}
             priceByIsin={priceByIsin}
           />
         </TabsContent>
