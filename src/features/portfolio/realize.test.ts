@@ -232,6 +232,34 @@ describe("replayTransactions", () => {
     expect(realizations).toHaveLength(0);
   });
 
+  it("propagates assetClass from the order to the realization", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b1",
+        kind: "buy",
+        assetClass: "equity",
+        tradeDate: "2024-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+      }),
+      makeOrder({
+        id: "s1",
+        kind: "sell",
+        assetClass: "equity",
+        tradeDate: "2025-01-01",
+        quantity: 5,
+        price: 150,
+        grossAmount: 750,
+      }),
+    ];
+
+    const { realizations } = replayTransactions(orders, { FR0010315770: 200 }, TODAY);
+
+    expect(realizations).toHaveLength(1);
+    expect(realizations[0]!.assetClass).toBe("equity");
+  });
+
   it("emits one realization per sell with the expected per-sale fields", () => {
     const orders: OrderRow[] = [
       makeOrder({

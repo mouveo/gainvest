@@ -53,6 +53,7 @@ export type PastRealization = {
   isin: string;
   support: Support;
   instrumentName: string;
+  assetClass: string;
   currency: string;
   saleDate: string;
   saleQty: number;
@@ -269,6 +270,7 @@ export function replayTransactions(
         isin: line.isin,
         support: line.support,
         instrumentName: line.instrumentName,
+        assetClass: line.assetClass,
         currency: line.currency,
         saleDate: o.tradeDate,
         saleQty: cappedQty,

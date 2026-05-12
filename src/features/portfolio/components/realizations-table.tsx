@@ -1,270 +1,339 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { DataTable } from "@/components/data-table/data-table";
+import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
+import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 
-import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
+import { fmtCcy, fmtDateFR, fmtInt, fmtNum, fmtPct } from "../format";
+import { ASSET_CLASS_FACETED_OPTIONS, labelAssetClass } from "../labels";
 import type { PastRealization } from "../realize";
+import { SUPPORTS } from "../types";
 import { ColumnsPicker } from "./columns/columns-picker";
-import type { ColumnDef } from "./columns/types";
+import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
 import { DeltaPill } from "./delta-pill";
 import { MoneyCell } from "./money-cell";
 import { SupportTag } from "./support-tag";
 
-type SortKey =
-  | "saleDate"
-  | "instrument"
-  | "qtySold"
-  | "pruAtSale"
-  | "saleNet"
-  | "dividends"
-  | "realizedTotal"
-  | "xirr";
-
 type RealizationColKey =
   | "saleDate"
   | "instrument"
   | "support"
+  | "type"
   | "qtySold"
   | "pruAtSale"
+  | "salePrice"
+  | "currentPrice"
+  | "spread"
   | "saleNet"
   | "dividends"
+  | "holdingFees"
   | "realizedTotal"
   | "xirr";
 
-const REALIZATION_COLUMNS: readonly ColumnDef<RealizationColKey>[] = [
-  { key: "saleDate", label: "Date vente", always: true },
+const REALIZATION_COLUMNS: readonly PickerColumnDef<RealizationColKey>[] = [
+  { key: "saleDate", label: "Date de vente", always: true },
   { key: "instrument", label: "Instrument", always: true },
   { key: "support", label: "Support", defaultVisible: true },
-  { key: "qtySold", label: "Qté vendue", num: true, defaultVisible: true },
-  { key: "pruAtSale", label: "PRU à la vente", num: true, defaultVisible: true },
+  { key: "type", label: "Type", defaultVisible: true },
+  { key: "qtySold", label: "Quantité vendue", num: true, defaultVisible: true },
+  { key: "pruAtSale", label: "Prix d'achat / action", num: true, defaultVisible: true },
+  { key: "salePrice", label: "Prix de vente / action", num: true, defaultVisible: true },
+  { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
+  { key: "spread", label: "Spread après vente", num: true, defaultVisible: false },
   { key: "saleNet", label: "Encaissé net", num: true, defaultVisible: true },
-  { key: "dividends", label: "Div attribués", num: true, defaultVisible: true },
-  { key: "realizedTotal", label: "Plus-value", num: true, defaultVisible: true },
+  { key: "dividends", label: "Dividendes attribués", num: true, defaultVisible: true },
+  { key: "holdingFees", label: "Frais de détention attribués", num: true, defaultVisible: false },
+  { key: "realizedTotal", label: "Réalisé total", num: true, defaultVisible: true },
   { key: "xirr", label: "XIRR", num: true, defaultVisible: true },
 ];
+
+function salePricePerShare(r: PastRealization): number {
+  return r.saleQty > 0 ? r.saleNet / r.saleQty : 0;
+}
 
 export function RealizationsTable({
   realizations,
   withDividends,
+  priceByIsin,
 }: {
   realizations: PastRealization[];
   withDividends: boolean;
+  priceByIsin: Record<string, number>;
 }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
-    key: "saleDate",
-    dir: "desc",
-  });
-
-  const { shown, toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
+  const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
     "gainvest:realizations:visible-columns",
     REALIZATION_COLUMNS,
   );
 
-  const sorted = useMemo(() => {
-    return realizations.slice().sort((a, b) => {
-      const av = readSortValue(a, sort.key, withDividends);
-      const bv = readSortValue(b, sort.key, withDividends);
-      if (typeof av === "string" && typeof bv === "string") {
-        return sort.dir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      const an = Number(av);
-      const bn = Number(bv);
-      if (!Number.isFinite(an) && !Number.isFinite(bn)) return 0;
-      if (!Number.isFinite(an)) return 1;
-      if (!Number.isFinite(bn)) return -1;
-      return sort.dir === "asc" ? an - bn : bn - an;
-    });
-  }, [realizations, sort, withDividends]);
-
-  const toggleSort = (key: SortKey) =>
-    setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
+  const columns = useMemo<TanstackColumnDef<PastRealization>[]>(
+    () => [
+      {
+        id: "saleDate",
+        accessorFn: (r) => r.saleDate,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Date de vente" />,
+        cell: ({ row }) => fmtDateFR(row.original.saleDate),
+        filterFn: "dateRange",
+      },
+      {
+        id: "instrument",
+        accessorFn: (r) => r.instrumentName,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+        cell: ({ row }) => {
+          const r = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="font-medium">{r.instrumentName}</span>
+              <span className="text-muted-foreground font-mono text-xs">
+                {r.isin} · {r.currency}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "support",
+        accessorFn: (r) => r.support,
+        header: "Support",
+        cell: ({ row }) => <SupportTag support={row.original.support} />,
+        enableSorting: false,
+        filterFn: "multiSelect",
+      },
+      {
+        id: "type",
+        accessorFn: (r) => r.assetClass,
+        header: "Type",
+        cell: ({ row }) => (
+          <Badge variant="outline">{labelAssetClass(row.original.assetClass)}</Badge>
+        ),
+        enableSorting: false,
+        filterFn: "multiSelect",
+      },
+      {
+        id: "qtySold",
+        accessorFn: (r) => r.saleQty,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Quantité vendue" />,
+        cell: ({ row }) => (
+          <div className="text-right font-mono tabular-nums">{fmtInt(row.original.saleQty)}</div>
+        ),
+      },
+      {
+        id: "pruAtSale",
+        accessorFn: (r) => r.pruAtSale,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Prix d'achat / action" />
+        ),
+        cell: ({ row }) => {
+          const v = row.original.pruAtSale;
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {fmtNum(v, v < 50 ? 3 : 2)} €
+            </div>
+          );
+        },
+      },
+      {
+        id: "salePrice",
+        accessorFn: (r) => salePricePerShare(r),
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Prix de vente / action" />
+        ),
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {fmtNum(v, v < 50 ? 3 : 2)} €
+            </div>
+          );
+        },
+      },
+      {
+        id: "currentPrice",
+        accessorFn: (r) => priceByIsin[r.isin] ?? Number.NaN,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Cours actuel" />,
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          if (!Number.isFinite(v)) {
+            return <div className="text-muted-foreground text-right font-mono text-xs">—</div>;
+          }
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {fmtNum(v, v < 50 ? 3 : 2)} €
+            </div>
+          );
+        },
+        sortingFn: (a, b, columnId) => {
+          const av = a.getValue<number>(columnId);
+          const bv = b.getValue<number>(columnId);
+          const af = Number.isFinite(av);
+          const bf = Number.isFinite(bv);
+          if (!af && !bf) return 0;
+          if (!af) return 1;
+          if (!bf) return -1;
+          return av - bv;
+        },
+      },
+      {
+        id: "spread",
+        accessorFn: (r) => {
+          const cp = priceByIsin[r.isin];
+          if (cp == null || !Number.isFinite(cp)) return Number.NaN;
+          const sp = salePricePerShare(r);
+          if (sp <= 0) return Number.NaN;
+          return (cp - sp) / sp;
+        },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Spread après vente" />,
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          if (!Number.isFinite(v)) {
+            return <div className="text-muted-foreground text-right font-mono text-xs">—</div>;
+          }
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {fmtPct(v, 1)}
+            </div>
+          );
+        },
+        sortingFn: (a, b, columnId) => {
+          const av = a.getValue<number>(columnId);
+          const bv = b.getValue<number>(columnId);
+          const af = Number.isFinite(av);
+          const bf = Number.isFinite(bv);
+          if (!af && !bf) return 0;
+          if (!af) return 1;
+          if (!bf) return -1;
+          return av - bv;
+        },
+      },
+      {
+        id: "saleNet",
+        accessorFn: (r) => r.saleNet,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Encaissé net" />,
+        cell: ({ row }) => (
+          <div className="text-right font-mono tabular-nums">
+            {fmtCcy(row.original.saleNet, 2)}
+          </div>
+        ),
+      },
+      {
+        id: "dividends",
+        accessorFn: (r) => r.dividendsAttributed,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Dividendes attribués" />
+        ),
+        cell: ({ row }) => {
+          const v = row.original.dividendsAttributed;
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {v > 0.005 ? fmtCcy(v, 2) : "—"}
+            </div>
+          );
+        },
+      },
+      {
+        id: "holdingFees",
+        accessorFn: (r) => r.holdingFeesAttributed,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Frais de détention attribués" />
+        ),
+        cell: ({ row }) => {
+          const v = row.original.holdingFeesAttributed;
+          return v > 0.005 ? (
+            <div className="text-right">
+              <MoneyCell value={v} dp={2} />
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-right font-mono tabular-nums">—</div>
+          );
+        },
+      },
+      {
+        id: "realizedTotal",
+        accessorFn: (r) => (withDividends ? r.pnlTotal : r.pnlCapital),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Réalisé total" />,
+        cell: ({ getValue }) => (
+          <div className="text-right">
+            <MoneyCell value={getValue<number>()} dp={2} signed />
+          </div>
+        ),
+      },
+      {
+        id: "xirr",
+        accessorFn: (r) => {
+          const v = withDividends ? r.xirrTotal : r.xirrCapital;
+          return Number.isFinite(v) ? v : Number.NaN;
+        },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="XIRR" />,
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          return Number.isFinite(v) ? (
+            <div className="text-right">
+              <DeltaPill value={v} />
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-right font-mono text-xs">—</div>
+          );
+        },
+        sortingFn: (a, b, columnId) => {
+          const av = a.getValue<number>(columnId);
+          const bv = b.getValue<number>(columnId);
+          const af = Number.isFinite(av);
+          const bf = Number.isFinite(bv);
+          if (!af && !bf) return 0;
+          if (!af) return 1;
+          if (!bf) return -1;
+          return av - bv;
+        },
+      },
+    ],
+    [withDividends, priceByIsin],
+  );
 
   if (realizations.length === 0) {
     return <EmptyState />;
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-muted-foreground text-sm">
-          {realizations.length} vente{realizations.length > 1 ? "s" : ""} passée
-          {realizations.length > 1 ? "s" : ""}
-        </span>
-        <ColumnsPicker
-          columns={REALIZATION_COLUMNS}
-          visible={visible}
-          visibleCount={visibleCount}
-          onToggle={toggle}
-          onReset={reset}
-          onShowAll={showAll}
+    <DataTable
+      columns={columns}
+      data={realizations}
+      storageKey="gainvest:datatable:realizations:state"
+      columnVisibility={visible}
+      initialState={{ sorting: [{ id: "saleDate", desc: true }] }}
+      toolbar={(table) => (
+        <DataTableToolbar
+          table={table}
+          facetedFilters={[
+            {
+              columnId: "support",
+              title: "Support",
+              options: SUPPORTS.map((s) => ({ label: s, value: s })),
+            },
+            {
+              columnId: "type",
+              title: "Type",
+              options: [...ASSET_CLASS_FACETED_OPTIONS],
+            },
+          ]}
+          dateRangeFilters={[{ columnId: "saleDate", title: "Date de vente" }]}
+          trailing={
+            <ColumnsPicker
+              columns={REALIZATION_COLUMNS}
+              visible={visible}
+              visibleCount={visibleCount}
+              onToggle={toggle}
+              onReset={reset}
+              onShowAll={showAll}
+            />
+          }
         />
-      </div>
-      <div className="border-border overflow-x-auto rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <SortHead k="saleDate" sort={sort} onSort={toggleSort}>
-                Date vente
-              </SortHead>
-              <SortHead k="instrument" sort={sort} onSort={toggleSort}>
-                Instrument
-              </SortHead>
-              {shown("support") ? <TableHead>Support</TableHead> : null}
-              {shown("qtySold") ? (
-                <SortHead k="qtySold" sort={sort} onSort={toggleSort} num>
-                  Qté vendue
-                </SortHead>
-              ) : null}
-              {shown("pruAtSale") ? (
-                <SortHead k="pruAtSale" sort={sort} onSort={toggleSort} num>
-                  PRU à la vente
-                </SortHead>
-              ) : null}
-              {shown("saleNet") ? (
-                <SortHead k="saleNet" sort={sort} onSort={toggleSort} num>
-                  Encaissé net
-                </SortHead>
-              ) : null}
-              {shown("dividends") ? (
-                <SortHead k="dividends" sort={sort} onSort={toggleSort} num>
-                  Div attribués
-                </SortHead>
-              ) : null}
-              {shown("realizedTotal") ? (
-                <SortHead k="realizedTotal" sort={sort} onSort={toggleSort} num>
-                  Plus-value
-                </SortHead>
-              ) : null}
-              {shown("xirr") ? (
-                <SortHead k="xirr" sort={sort} onSort={toggleSort} num>
-                  XIRR
-                </SortHead>
-              ) : null}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sorted.map((r) => {
-              const realized = withDividends ? r.pnlTotal : r.pnlCapital;
-              const xirrValue = withDividends ? r.xirrTotal : r.xirrCapital;
-              return (
-                <TableRow key={`${r.key}::${r.saleDate}::${r.saleQty}::${r.saleNet}`}>
-                  <TableCell>{fmtDateFR(r.saleDate)}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{r.instrumentName}</span>
-                      <span className="text-muted-foreground font-mono text-xs">
-                        {r.isin} · {r.currency}
-                      </span>
-                    </div>
-                  </TableCell>
-                  {shown("support") ? (
-                    <TableCell>
-                      <SupportTag support={r.support} />
-                    </TableCell>
-                  ) : null}
-                  {shown("qtySold") ? (
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {fmtInt(r.saleQty)}
-                    </TableCell>
-                  ) : null}
-                  {shown("pruAtSale") ? (
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {fmtNum(r.pruAtSale, r.pruAtSale < 50 ? 3 : 2)} €
-                    </TableCell>
-                  ) : null}
-                  {shown("saleNet") ? (
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {fmtCcy(r.saleNet, 2)}
-                    </TableCell>
-                  ) : null}
-                  {shown("dividends") ? (
-                    <TableCell className="text-right font-mono tabular-nums">
-                      {r.dividendsAttributed > 0.005 ? fmtCcy(r.dividendsAttributed, 2) : "—"}
-                    </TableCell>
-                  ) : null}
-                  {shown("realizedTotal") ? (
-                    <TableCell className="text-right">
-                      <MoneyCell value={realized} dp={2} signed />
-                    </TableCell>
-                  ) : null}
-                  {shown("xirr") ? (
-                    <TableCell className="text-right">
-                      {Number.isFinite(xirrValue) ? (
-                        <DeltaPill value={xirrValue} />
-                      ) : (
-                        <span className="text-muted-foreground font-mono text-xs">—</span>
-                      )}
-                    </TableCell>
-                  ) : null}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
+      )}
+    />
   );
-
-  function SortHead({
-    k,
-    sort,
-    onSort,
-    num,
-    children,
-  }: {
-    k: SortKey;
-    sort: { key: SortKey; dir: "asc" | "desc" };
-    onSort: (k: SortKey) => void;
-    num?: boolean;
-    children: React.ReactNode;
-  }) {
-    const active = sort.key === k;
-    const Icon = active ? (sort.dir === "desc" ? ChevronDown : ChevronUp) : null;
-    return (
-      <TableHead
-        onClick={() => onSort(k)}
-        className={cn("cursor-pointer select-none", num ? "text-right" : undefined)}
-      >
-        <span className={cn("inline-flex items-center gap-1", num && "justify-end")}>
-          {children}
-          {Icon ? <Icon className="size-3" /> : null}
-        </span>
-      </TableHead>
-    );
-  }
-}
-
-function readSortValue(r: PastRealization, key: SortKey, withDividends: boolean): string | number {
-  switch (key) {
-    case "saleDate":
-      return r.saleDate;
-    case "instrument":
-      return r.instrumentName;
-    case "qtySold":
-      return r.saleQty;
-    case "pruAtSale":
-      return r.pruAtSale;
-    case "saleNet":
-      return r.saleNet;
-    case "dividends":
-      return r.dividendsAttributed;
-    case "realizedTotal":
-      return withDividends ? r.pnlTotal : r.pnlCapital;
-    case "xirr":
-      return withDividends ? r.xirrTotal : r.xirrCapital;
-  }
 }
 
 function EmptyState() {
