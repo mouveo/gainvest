@@ -8,23 +8,34 @@ export function KpiStrip({
   totals,
   pricesUpdatedAt,
   withDividends = false,
+  netOfFees = false,
 }: {
   totals: PortfolioTotals;
   pricesUpdatedAt: string | null;
   withDividends?: boolean;
+  netOfFees?: boolean;
 }) {
-  const pnlValue = withDividends ? totals.pnlTotal : totals.pnl;
-  const pnlPctValue = withDividends ? totals.pnlPctTotal : totals.pnlPct;
-  const xirrValue = withDividends ? totals.xirrTotal : totals.xirrCapital;
-  const mwrSubLabel = withDividends ? "MWR · avec divs" : "MWR · capital seul";
+  const basePnl = withDividends ? totals.pnlTotal : totals.pnl;
+  const pnlValue = basePnl - (netOfFees ? totals.holdingFeesTotal : 0);
+  const pnlPctValue = totals.invested > 0 ? pnlValue / totals.invested : 0;
+  const xirrValue = netOfFees
+    ? withDividends
+      ? totals.xirrTotalNetFees
+      : totals.xirrCapitalNetFees
+    : withDividends
+      ? totals.xirrTotal
+      : totals.xirrCapital;
+  const mwrBaseLabel = withDividends ? "MWR · avec divs" : "MWR · capital seul";
+  const mwrSubLabel = netOfFees ? `${mwrBaseLabel} · net frais` : mwrBaseLabel;
+  const investedSub =
+    `${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}` +
+    (totals.holdingFeesTotal > 0
+      ? ` · dont ${fmtCcy(totals.holdingFeesTotal, 0)} de droits de garde`
+      : "");
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Kpi
-        label="Capital investi"
-        value={fmtCcy(totals.invested, 0)}
-        sub={`${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}`}
-      />
+      <Kpi label="Capital investi" value={fmtCcy(totals.invested, 0)} sub={investedSub} />
       <Kpi
         label="Valorisation"
         value={fmtCcy(totals.valuation, 0)}
