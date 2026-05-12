@@ -6,7 +6,7 @@
 // remaining lot keeps the unsold prorata of past dividends and buy flows, so
 // two successive sells never reuse the same flow.
 
-import type { OrderRow, TradableOrder } from "./aggregate";
+import type { CurrentPrice, OrderRow, TradableOrder } from "./aggregate";
 import { feesEur, grossAmountEur } from "./aggregate";
 import { isForeignIsin, isHoldingFee } from "./holding-fees";
 import type { Support } from "./types";
@@ -31,7 +31,15 @@ export type ActivePosition = {
   pruGross: number;
   investedGross: number;
   pnlCapitalGross: number;
+  // For non-bonds this is the EUR price per unit. For bonds, this is the
+  // native % of par quote (mirroring `currentPctPar`) — bond valuation needs
+  // the % of par + FX + nominal qty, not a single EUR-per-unit number.
   currentPrice: number;
+  // Bond-only — explicit "% of par" view of both the weighted-average buy
+  // price (`pruPctPar`) and the current quote (`currentPctPar`). Null for
+  // every other asset class.
+  pruPctPar: number | null;
+  currentPctPar: number | null;
   valuation: number;
   totalCost: number;
   dividendsAttributed: number;
@@ -162,6 +170,10 @@ type LineState = {
   // Gross cost = Σ qty × price (excludes fees). Trimmed proportionally on
   // sells, just like totalCost. Surfaces a "PRU brut" view.
   totalCostGross: number;
+  // Σ (bond price in % of par × nominal qty) accumulated on buys, trimmed
+  // proportionally on sells. Yields a "PRU % of par" view independent of FX
+  // and fees. 0 for non-bond lines.
+  totalNativePriceQty: number;
   divPerShareCumul: number;
   divPerShareEntryAvg: number;
   activeBuyFlows: Flow[];
@@ -203,7 +215,7 @@ type CashState = {
 
 export function replayTransactions(
   orders: OrderRow[],
-  priceByIsin: Record<string, number>,
+  priceByIsin: Record<string, CurrentPrice>,
   today: Date = new Date(),
   fxByCurrency: Record<string, number> = {},
 ): ReplayResult {
@@ -263,6 +275,7 @@ export function replayTransactions(
         qty: 0,
         totalCost: 0,
         totalCostGross: 0,
+        totalNativePriceQty: 0,
         divPerShareCumul: 0,
         divPerShareEntryAvg: 0,
         activeBuyFlows: [],
@@ -301,6 +314,11 @@ export function replayTransactions(
           : line.divPerShareEntryAvg;
       line.totalCost += cost;
       line.totalCostGross += grossLeg;
+      // Bonds: keep a running Σ(native price × qty) so we can surface a stable
+      // PRU expressed in % of par on the remaining nominal after partial sells.
+      if (line.assetClass === "bond" && o.price != null) {
+        line.totalNativePriceQty += o.price * qtyAdded;
+      }
       line.qty = newQty;
       line.activeBuyFlows.push({ date: o.tradeDate, amount: -cost });
       line.totalFees += feesEurVal;
@@ -455,8 +473,11 @@ export function replayTransactions(
 
       // CUMP: trim cost and qty by the prorata; PRU on the remaining lot is unchanged.
       const costBasisGross = qtyBefore > 0 ? (line.totalCostGross / qtyBefore) * cappedQty : 0;
+      const nativePriceQtyConsumed =
+        qtyBefore > 0 ? (line.totalNativePriceQty / qtyBefore) * cappedQty : 0;
       line.totalCost -= costBasis;
       line.totalCostGross -= costBasisGross;
+      line.totalNativePriceQty -= nativePriceQtyConsumed;
       line.qty -= cappedQty;
       line.activeBuyFlows = buySplit.remaining;
       line.activeDividendFlows = divSplit.remaining;
@@ -519,12 +540,20 @@ export function replayTransactions(
     if (line.firstBuyDate === null) continue;
     if (line.qty <= 0) continue;
 
-    const currentPrice = priceByIsin[line.isin] ?? 0;
+    const price = priceByIsin[line.isin];
     const pru = line.totalCost / line.qty;
     const invested = line.qty * pru;
     const pruGross = line.totalCostGross / line.qty;
     const investedGross = line.qty * pruGross;
-    const valuation = line.qty * currentPrice;
+    // Bonds are valued from a % of par quote: valuation = qty × native/100 × fx.
+    // Non-bonds keep the EUR-per-unit shortcut: valuation = qty × eur.
+    const isBond = line.assetClass === "bond";
+    const currentPrice = isBond ? (price?.native ?? 0) : (price?.eur ?? 0);
+    const valuation = isBond
+      ? line.qty * (price?.native ?? 0) / 100 * (price?.fxToEur ?? 1)
+      : line.qty * (price?.eur ?? 0);
+    const pruPctPar = isBond && line.qty > 0 ? line.totalNativePriceQty / line.qty : null;
+    const currentPctPar = isBond ? (price?.native ?? null) : null;
     const dividendsAttributed = sumFlows(line.activeDividendFlows);
 
     const cashFlowsCapital: Flow[] = [
@@ -576,6 +605,8 @@ export function replayTransactions(
       investedGross,
       pnlCapitalGross,
       currentPrice,
+      pruPctPar,
+      currentPctPar,
       valuation,
       totalCost: line.totalCost,
       dividendsAttributed,
@@ -635,6 +666,8 @@ export function replayTransactions(
       investedGross: valuationEur,
       pnlCapitalGross: 0,
       currentPrice: fxToEur,
+      pruPctPar: null,
+      currentPctPar: null,
       valuation: valuationEur,
       totalCost: valuationEur,
       // For cash lines we surface the interest received in the "Dividendes"

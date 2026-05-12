@@ -8,6 +8,7 @@ import {
   computeMovementTotals,
   computeRealizationTotals,
   computeTotals,
+  type CurrentPrice,
   type OrderRow,
   type Position,
 } from "../aggregate";
@@ -29,7 +30,7 @@ type Props = {
   positions: Position[];
   orders: OrderRow[];
   realizations: PastRealization[];
-  priceByIsin: Record<string, number>;
+  priceByIsin: Record<string, CurrentPrice>;
   pricesUpdatedAt: string | null;
 };
 

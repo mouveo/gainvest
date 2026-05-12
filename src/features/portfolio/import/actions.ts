@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getBroker } from "../brokers/registry";
 import type { ParsedKind, ParsedRow } from "../brokers/types";
 import { getDefaultAccountId } from "../queries";
-import { SUPPORTS, type Support } from "../types";
+import { SUPPORTS, type AssetClass, type Support } from "../types";
 
 export type ImportResult =
   | {
@@ -194,6 +194,30 @@ export async function importBrokerOrders(
   const isins = Array.from(new Set(valid.map((r) => r.isin).filter((x): x is string => !!x)));
   const byIsin = new Map<string, InstrumentLite>();
 
+  // Broker-provided metadata fallback (IBKR carries name/symbol/currency/assetClass
+  // even when OpenFIGI doesn't know the ISIN — typically for bonds).
+  type BrokerMeta = {
+    name: string | null;
+    symbol: string | null;
+    currency: string | null;
+    assetClass: AssetClass | null;
+  };
+  const brokerMetaByIsin = new Map<string, BrokerMeta>();
+  for (const r of valid) {
+    if (!r.isin) continue;
+    const existing = brokerMetaByIsin.get(r.isin) ?? {
+      name: null,
+      symbol: null,
+      currency: null,
+      assetClass: null,
+    };
+    existing.name = existing.name ?? r.name ?? null;
+    existing.symbol = existing.symbol ?? r.symbol ?? null;
+    existing.currency = existing.currency ?? r.currency ?? null;
+    existing.assetClass = existing.assetClass ?? r.assetClass ?? null;
+    brokerMetaByIsin.set(r.isin, existing);
+  }
+
   if (isins.length > 0) {
     const { data, error } = await supabase
       .from("instruments")
@@ -205,23 +229,65 @@ export async function importBrokerOrders(
     }
   }
 
+  // For instruments already cached locally, reconcile asset_class with what
+  // the broker says (e.g. a bond previously misclassified as equity by
+  // OpenFIGI fallback). The DB-side upsert below would otherwise never run
+  // for these, leaving the bad class in place.
+  for (const isin of isins) {
+    const cached = byIsin.get(isin);
+    if (!cached) continue;
+    const meta = brokerMetaByIsin.get(isin);
+    const brokerClass = meta?.assetClass;
+    if (!brokerClass || brokerClass === cached.asset_class) continue;
+    const { data: updated, error: updErr } = await supabase
+      .from("instruments")
+      .update({ asset_class: brokerClass })
+      .eq("id", cached.id)
+      .select("id, isin, name, asset_class, currency")
+      .single();
+    if (updErr || !updated) continue;
+    byIsin.set(isin, updated);
+  }
+
   for (const isin of isins) {
     if (byIsin.has(isin)) continue;
     const meta = await lookupIsin(isin);
-    if (!meta) continue;
+    let insertPayload: {
+      isin: string;
+      symbol: string;
+      name: string;
+      asset_class: AssetClass;
+      currency: string;
+      country: string | null;
+    } | null = null;
+    if (meta) {
+      insertPayload = {
+        isin,
+        symbol: isin,
+        name: meta.name,
+        asset_class: meta.assetClass,
+        currency: meta.currency,
+        country: meta.country,
+      };
+    } else {
+      // OpenFIGI miss — fall back to broker-side metadata so an IBKR buy/sell
+      // for an unindexed ISIN (typical bond case) still gets imported.
+      const broker = brokerMetaByIsin.get(isin);
+      if (broker?.name && broker.assetClass && broker.currency) {
+        insertPayload = {
+          isin,
+          symbol: broker.symbol ?? isin,
+          name: broker.name,
+          asset_class: broker.assetClass,
+          currency: broker.currency,
+          country: isin.slice(0, 2),
+        };
+      }
+    }
+    if (!insertPayload) continue;
     const { data: upserted, error: upsertErr } = await supabase
       .from("instruments")
-      .upsert(
-        {
-          isin,
-          symbol: isin,
-          name: meta.name,
-          asset_class: meta.assetClass,
-          currency: meta.currency,
-          country: meta.country,
-        },
-        { onConflict: "symbol,mic" },
-      )
+      .upsert(insertPayload, { onConflict: "symbol,mic" })
       .select("id, isin, name, asset_class, currency")
       .single();
     if (upsertErr || !upserted) continue;

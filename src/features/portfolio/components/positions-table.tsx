@@ -29,6 +29,12 @@ import { DeltaPill } from "./delta-pill";
 import { EditablePrice } from "./editable-price";
 import { ListingPicker } from "./listing-picker";
 import { MoneyCell } from "./money-cell";
+import {
+  currentPriceCell,
+  orderPriceCell,
+  pruCell,
+  pruGrossCell,
+} from "./positions-table.cells";
 import { SupportTag } from "./support-tag";
 
 type PositionColKey =
@@ -208,17 +214,15 @@ export function PositionsTable({
       },
       {
         id: "pru",
-        accessorFn: (p) => p.pru,
+        accessorFn: (p) => (p.assetClass === "bond" && p.pruPctPar != null ? p.pruPctPar : p.pru),
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="PRU" align="right" />
         ),
         cell: ({ row }) => {
-          const p = row.original;
-          if (p.assetClass === "cash") return DashCell;
+          const cell = pruCell(row.original);
+          if (cell.kind === "dash") return DashCell;
           return (
-            <div className="text-right font-mono tabular-nums">
-              {fmtNum(p.pru, p.pru < 50 ? 3 : 2)} €
-            </div>
+            <div className="text-right font-mono tabular-nums">{cell.text}</div>
           );
         },
       },
@@ -229,28 +233,35 @@ export function PositionsTable({
           <DataTableColumnHeader column={column} title="PRU brut" align="right" />
         ),
         cell: ({ row }) => {
-          const p = row.original;
-          if (p.assetClass === "cash") return DashCell;
+          const cell = pruGrossCell(row.original);
+          if (cell.kind === "dash") return DashCell;
           return (
             <div className="text-muted-foreground text-right font-mono tabular-nums">
-              {fmtCcy(p.pruGross, p.pruGross < 50 ? 3 : 2)}
+              {cell.text}
             </div>
           );
         },
       },
       {
         id: "currentPrice",
-        accessorFn: (p) => p.currentPrice,
+        accessorFn: (p) =>
+          p.assetClass === "bond" && p.currentPctPar != null ? p.currentPctPar : p.currentPrice,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Cours actuel" align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original;
-          if (p.assetClass === "cash") return DashCell;
+          const cell = currentPriceCell(p);
+          if (cell.kind === "dash") return DashCell;
+          if (cell.kind === "editable-eur") {
+            return (
+              <div className="text-right" onClick={(e) => e.stopPropagation()}>
+                <EditablePrice isin={p.isin} value={cell.value} />
+              </div>
+            );
+          }
           return (
-            <div className="text-right" onClick={(e) => e.stopPropagation()}>
-              <EditablePrice isin={p.isin} value={p.currentPrice} />
-            </div>
+            <div className="text-right font-mono tabular-nums">{cell.text}</div>
           );
         },
       },
@@ -517,48 +528,61 @@ function OrdersSubrow({ position }: { position: Position }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {position.orders.map((o) => (
-            <TableRow key={o.id}>
-              <TableCell>
-                <div className="flex flex-col">
-                  <span>{fmtDateFR(o.tradeDate)}</span>
-                  {o.tradeTime ? (
-                    <span className="text-muted-foreground font-mono text-xs">{o.tradeTime}</span>
-                  ) : null}
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge
-                  variant="outline"
-                  className={
-                    o.kind === "buy"
-                      ? "border-success/30 bg-success/10 text-success"
-                      : "border-danger/30 bg-danger/10 text-danger"
-                  }
-                >
-                  {o.kind === "buy" ? "Achat" : "Vente"}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {fmtInt(o.quantity)}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {fmtNum(o.price, o.price < 50 ? 3 : 2)} €
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {fmtCcy(o.quantity * o.price, 2)}
-              </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {fmtCcy(o.fees, 2)}
-              </TableCell>
-              <TableCell>
-                <div className="flex flex-col">
-                  <span className="text-sm">{o.broker ?? "—"}</span>
-                  <span className="text-muted-foreground text-xs">{o.executionVenue ?? "—"}</span>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
+          {position.orders.map((o) => {
+            const priceCell = orderPriceCell(o, position.assetClass);
+            // Bonds are quoted in % of par, so `quantity * price` is not a
+            // currency amount — fall back to the broker-reported gross
+            // projected to EUR via the trade-time fxRate. Non-bonds keep the
+            // legacy display.
+            const amountEur =
+              position.assetClass === "bond"
+                ? o.grossAmount * (o.fxRate ?? 1)
+                : o.quantity * o.price;
+            return (
+              <TableRow key={o.id}>
+                <TableCell>
+                  <div className="flex flex-col">
+                    <span>{fmtDateFR(o.tradeDate)}</span>
+                    {o.tradeTime ? (
+                      <span className="text-muted-foreground font-mono text-xs">{o.tradeTime}</span>
+                    ) : null}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={
+                      o.kind === "buy"
+                        ? "border-success/30 bg-success/10 text-success"
+                        : "border-danger/30 bg-danger/10 text-danger"
+                    }
+                  >
+                    {o.kind === "buy" ? "Achat" : "Vente"}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtInt(o.quantity)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {priceCell.text}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtCcy(amountEur, 2)}
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {fmtCcy(o.fees, 2)}
+                </TableCell>
+                <TableCell>
+                  <div className="flex flex-col">
+                    <span className="text-sm">{o.broker ?? "—"}</span>
+                    <span className="text-muted-foreground text-xs">
+                      {o.executionVenue ?? "—"}
+                    </span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

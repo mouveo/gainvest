@@ -59,6 +59,28 @@ export type OrderRow = {
 
 export type TradableOrder = OrderRow & { quantity: number; price: number };
 
+/**
+ * Current market price for an instrument, broken into its raw components so
+ * each consumer can pick the right view without re-deriving FX.
+ *
+ * - `native`   : price in the instrument's native currency. For asset_class
+ *                `bond`, this is a **percentage of par** (e.g. 97.38 means
+ *                97.38% of nominal), per IBKR / EODHD convention. For every
+ *                other asset class it's the unit price.
+ * - `eur`      : EUR price per **unit of position quantity** (i.e. the value
+ *                that, multiplied by `qty`, gives the EUR valuation). For
+ *                non-bonds that's `native * fxToEur`; for bonds it's
+ *                `native / 100 * fxToEur` since `qty` is nominal.
+ * - `currency` : ISO code of `native`.
+ * - `fxToEur`  : currency-to-EUR rate snapshot used to derive `eur`.
+ */
+export type CurrentPrice = {
+  native: number;
+  eur: number;
+  currency: string;
+  fxToEur: number;
+};
+
 export function grossAmountEur(o: Pick<OrderRow, "grossAmount" | "fxRate">): number {
   return o.grossAmount * (o.fxRate ?? 1);
 }
@@ -87,6 +109,11 @@ export type Position = {
   currentPrice: number;
   valuation: number;
   invested: number;
+  // For bonds, `currentPrice` is the native quote in % of par and `currentPctPar`
+  // mirrors it explicitly; `pruPctPar` is the weighted-average buy price also in
+  // % of par. Both are `null` for non-bond positions (cash, equity, etf, ...).
+  pruPctPar: number | null;
+  currentPctPar: number | null;
   // Capital P&L (price-only). Kept under the legacy field names for compat.
   pnl: number;
   pnlPct: number;
@@ -140,6 +167,8 @@ function activeToPosition(p: ActivePosition): Position {
     investedGross: p.investedGross,
     pnlCapitalGross: p.pnlCapitalGross,
     currentPrice: p.currentPrice,
+    pruPctPar: p.pruPctPar,
+    currentPctPar: p.currentPctPar,
     valuation: p.valuation,
     invested: p.invested,
     pnl: p.pnlCapital,
@@ -176,7 +205,7 @@ function byValuationDesc(a: Position, b: Position): number {
 
 export function aggregate(
   orders: OrderRow[],
-  priceByIsin: Record<string, number>,
+  priceByIsin: Record<string, CurrentPrice>,
   today: Date = new Date(),
   fxByCurrency: Record<string, number> = {},
 ): Position[] {
@@ -186,7 +215,7 @@ export function aggregate(
 
 export function aggregateWithRealizations(
   orders: OrderRow[],
-  priceByIsin: Record<string, number>,
+  priceByIsin: Record<string, CurrentPrice>,
   today: Date = new Date(),
   fxByCurrency: Record<string, number> = {},
 ): { positions: Position[]; realizations: PastRealization[] } {

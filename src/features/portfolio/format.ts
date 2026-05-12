@@ -28,6 +28,13 @@ export function fmtInt(n: number): string {
   return new Intl.NumberFormat("fr-FR").format(n);
 }
 
+// Bond prices are quoted as a percentage of nominal value ("% du pair"):
+// 97.383 means 97.383 % of par. We display them with more precision than a
+// regular percent (default 3 dp), without the multiply-by-100 step.
+export function fmtPctPar(n: number, dp = 3): string {
+  return fmtNum(n, dp);
+}
+
 export function fmtPct(n: number, dp = 1): string {
   const sign = n >= 0 ? "+" : "";
   return `${sign}${new Intl.NumberFormat("fr-FR", {
