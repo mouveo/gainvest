@@ -1,10 +1,8 @@
 import "server-only";
 
-// EODHD provider — covers EU exchanges (Xetra, Euronext, LSE) and US, plus
-// FX. Free tier ships 20 API requests / day, so refreshPrices() relies on
-// short-circuiting via instruments.current_price_updated_at TTL.
-//
-// Reference: https://eodhd.com/financial-apis
+// @deprecated — use `@/lib/quotes` (QuoteProvider interface + pickPreferredListing).
+// Kept temporarily for callers in `features/portfolio/actions.ts`; no new
+// business logic should be added here.
 
 const BASE = "https://eodhd.com/api";
 

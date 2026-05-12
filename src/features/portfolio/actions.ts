@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { fetchFxToEur, fetchRealTimeQuote, searchByIsin } from "@/lib/eodhd";
+import { type Listing, pickPreferredListing, quoteProvider } from "@/lib/quotes";
+import { findListingForPreference, shouldRejectDivergentQuote } from "@/lib/quotes/ranking";
 import { createClient } from "@/lib/supabase/server";
 
 import { getDefaultAccountId } from "./queries";
@@ -136,6 +137,73 @@ export async function deleteTransactionsByBroker(
   return { deleted: data?.length ?? 0 };
 }
 
+export async function fetchAvailableListings(isin: string): Promise<Listing[]> {
+  const cleaned = isin.trim().toUpperCase();
+  if (!cleaned) return [];
+  // Authentication required to avoid leaking provider quota to anonymous callers.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const listings = await quoteProvider.searchListings(cleaned);
+  // Sort by the same ranking used for auto-pick so the preferred candidate
+  // surfaces first in the UI list.
+  const preferred = pickPreferredListing(listings);
+  if (!preferred) return listings;
+  const head = listings.find((l) => l.providerSymbol === preferred.providerSymbol);
+  if (!head) return listings;
+  return [head, ...listings.filter((l) => l.providerSymbol !== preferred.providerSymbol)];
+}
+
+export type SetInstrumentListingResult = { ok: true } | { ok: false; error: string };
+
+export async function setInstrumentListing(
+  instrumentId: string,
+  mic: string,
+  currency: string,
+): Promise<SetInstrumentListingResult> {
+  const cleanedMic = mic.trim().toUpperCase();
+  const cleanedCcy = currency.trim().toUpperCase();
+  if (!instrumentId) return { ok: false, error: "Instrument inconnu." };
+  if (!cleanedMic) return { ok: false, error: "MIC requis." };
+  if (!cleanedCcy) return { ok: false, error: "Devise requise." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Non authentifié." };
+
+  // RLS filters to the caller's rows; we double-check ownership here so the
+  // server action refuses cleanly when the instrument isn't held.
+  const { data: txn, error: txnErr } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("instrument_id", instrumentId)
+    .limit(1)
+    .maybeSingle();
+  if (txnErr) return { ok: false, error: txnErr.message };
+  if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
+
+  const { error: updErr } = await supabase
+    .from("instruments")
+    .update({
+      preferred_mic: cleanedMic,
+      preferred_currency: cleanedCcy,
+      currency: cleanedCcy,
+      provider: null,
+      provider_symbol: null,
+    })
+    .eq("id", instrumentId);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  revalidatePath("/portfolio");
+  return { ok: true };
+}
+
 export async function updateInstrumentPrice(isin: string, price: number): Promise<void> {
   if (!Number.isFinite(price) || price < 0) return;
   const supabase = await createClient();
@@ -161,8 +229,12 @@ type RefreshableInstrument = {
   id: string;
   isin: string | null;
   name: string;
-  yahoo_symbol: string | null;
   currency: string;
+  preferred_mic: string | null;
+  preferred_currency: string | null;
+  provider: string | null;
+  provider_symbol: string | null;
+  current_price: number | null;
   current_price_updated_at: string | null;
 };
 
@@ -189,7 +261,11 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
           isin,
           name,
           currency,
-          yahoo_symbol,
+          preferred_mic,
+          preferred_currency,
+          provider,
+          provider_symbol,
+          current_price,
           current_price_updated_at
         )
       `,
@@ -208,7 +284,11 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
       isin: inst.isin ?? null,
       name: inst.name,
       currency: inst.currency ?? "EUR",
-      yahoo_symbol: inst.yahoo_symbol ?? null,
+      preferred_mic: inst.preferred_mic ?? null,
+      preferred_currency: inst.preferred_currency ?? null,
+      provider: inst.provider ?? null,
+      provider_symbol: inst.provider_symbol ?? null,
+      current_price: inst.current_price ?? null,
       current_price_updated_at: inst.current_price_updated_at ?? null,
     });
   }
@@ -229,40 +309,89 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
     stale.push(inst);
   }
 
-  // Step 1 — resolve any instrument that does not have an EODHD symbol yet
-  // (yahoo_symbol stores "CODE.EXCHANGE" e.g. "AAPL.US", "IS3N.XETRA").
+  const providerName = quoteProvider.name;
+
+  // Step 1 — auto-pick a preferred listing for instruments without one.
   for (const inst of stale) {
-    if (inst.yahoo_symbol) continue;
+    if (inst.preferred_mic) continue;
     if (!inst.isin) {
       failed.push(inst.name);
       continue;
     }
-    const hit = await searchByIsin(inst.isin);
-    if (!hit) {
+    const listings = await quoteProvider.searchListings(inst.isin);
+    const chosen = pickPreferredListing(listings);
+    if (!chosen) {
       failed.push(inst.isin);
       continue;
     }
-    const symbol = `${hit.code}.${hit.exchange}`;
     const { error: updErr } = await supabase
       .from("instruments")
-      .update({ yahoo_symbol: symbol, currency: hit.currency || inst.currency })
+      .update({
+        preferred_mic: chosen.mic,
+        preferred_currency: chosen.currency,
+        currency: chosen.currency,
+        provider: providerName,
+        provider_symbol: chosen.providerSymbol,
+      })
       .eq("id", inst.id);
     if (updErr) {
       failed.push(inst.isin);
       continue;
     }
-    inst.yahoo_symbol = symbol;
-    inst.currency = hit.currency || inst.currency;
+    inst.preferred_mic = chosen.mic;
+    inst.preferred_currency = chosen.currency;
+    inst.currency = chosen.currency;
+    inst.provider = providerName;
+    inst.provider_symbol = chosen.providerSymbol;
   }
 
-  // Step 2 — fetch real-time quote per symbol (EODHD does not batch on free tier).
+  // Step 2 — remap provider_symbol when the stored provider no longer
+  // matches the active one (or the symbol was never persisted).
+  for (const inst of stale) {
+    if (!inst.preferred_mic) continue;
+    if (inst.provider === providerName && inst.provider_symbol) continue;
+    if (!inst.isin) {
+      failed.push(inst.name);
+      continue;
+    }
+    const listings = await quoteProvider.searchListings(inst.isin);
+    const match = findListingForPreference(listings, inst.preferred_mic, inst.preferred_currency);
+    if (!match) {
+      failed.push(inst.isin);
+      continue;
+    }
+    const nextCurrency = inst.preferred_currency ?? match.currency;
+    const { error: updErr } = await supabase
+      .from("instruments")
+      .update({
+        provider: providerName,
+        provider_symbol: match.providerSymbol,
+        currency: nextCurrency,
+      })
+      .eq("id", inst.id);
+    if (updErr) {
+      failed.push(inst.isin);
+      continue;
+    }
+    inst.provider = providerName;
+    inst.provider_symbol = match.providerSymbol;
+    inst.currency = nextCurrency;
+  }
+
+  // Step 3 — fetch a fresh quote per instrument and apply the divergence guard.
   let refreshed = 0;
   const updatedAt = new Date().toISOString();
   for (const inst of stale) {
-    if (!inst.yahoo_symbol) continue;
-    const quote = await fetchRealTimeQuote(inst.yahoo_symbol);
+    if (!inst.provider_symbol) continue;
+    const quote = await quoteProvider.fetchQuote(inst.provider_symbol);
     if (!quote) {
       failed.push(inst.isin ?? inst.name);
+      continue;
+    }
+    if (shouldRejectDivergentQuote(inst.current_price, quote.close, force)) {
+      failed.push(
+        `${inst.isin ?? inst.name}: divergence >50%, kept ${inst.current_price} -> ${quote.close}`,
+      );
       continue;
     }
     const { error: updErr } = await supabase
@@ -276,10 +405,13 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
       failed.push(inst.isin ?? inst.name);
       continue;
     }
+    inst.current_price = quote.close;
     refreshed += 1;
   }
 
-  // Step 3 — refresh FX cache for every distinct non-EUR currency we touched.
+  // Step 4 — refresh FX cache for every distinct non-EUR currency we touched.
+  // instrument.currency is kept aligned with preferred_currency above, so a
+  // GBX/GBP/USD listing surfaces here automatically.
   const currencies = new Set<string>();
   for (const inst of byId.values()) {
     const ccy = (inst.currency || "EUR").toUpperCase();
@@ -297,7 +429,7 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
         const age = now - Date.parse(last);
         if (Number.isFinite(age) && age < FX_TTL_MS) continue;
       }
-      const rate = await fetchFxToEur(ccy);
+      const rate = await quoteProvider.fetchFxToEur(ccy);
       if (rate == null) {
         failed.push(`FX ${ccy}->EUR`);
         continue;

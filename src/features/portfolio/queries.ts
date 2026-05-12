@@ -33,10 +33,13 @@ export async function getOrders(): Promise<OrderRow[]> {
         broker,
         support,
         instrument:instruments (
+          id,
           isin,
           name,
           asset_class,
-          currency
+          currency,
+          preferred_mic,
+          preferred_currency
         )
       `,
     )
@@ -52,12 +55,18 @@ export async function getOrders(): Promise<OrderRow[]> {
 
     const instrument = row.instrument;
     let isin = "";
+    let instrumentId: string | null = null;
+    let preferredMic: string | null = null;
+    let preferredCurrency: string | null = null;
     let instrumentName: string;
     let assetClass: string;
     let currency: string;
 
     if (instrument) {
       isin = instrument.isin ?? "";
+      instrumentId = instrument.id ?? null;
+      preferredMic = instrument.preferred_mic ?? null;
+      preferredCurrency = instrument.preferred_currency ?? null;
       instrumentName = instrument.name;
       assetClass = instrument.asset_class;
       currency = instrument.currency;
@@ -73,6 +82,9 @@ export async function getOrders(): Promise<OrderRow[]> {
     orders.push({
       id: row.id,
       isin,
+      instrumentId,
+      preferredMic,
+      preferredCurrency,
       instrumentName,
       assetClass,
       currency,

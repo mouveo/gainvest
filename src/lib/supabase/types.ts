@@ -100,6 +100,10 @@ export type Database = {
           isin: string | null
           mic: string | null
           name: string
+          preferred_currency: string | null
+          preferred_mic: string | null
+          provider: string | null
+          provider_symbol: string | null
           symbol: string
           yahoo_symbol: string | null
         }
@@ -114,6 +118,10 @@ export type Database = {
           isin?: string | null
           mic?: string | null
           name: string
+          preferred_currency?: string | null
+          preferred_mic?: string | null
+          provider?: string | null
+          provider_symbol?: string | null
           symbol: string
           yahoo_symbol?: string | null
         }
@@ -128,6 +136,10 @@ export type Database = {
           isin?: string | null
           mic?: string | null
           name?: string
+          preferred_currency?: string | null
+          preferred_mic?: string | null
+          provider?: string | null
+          provider_symbol?: string | null
           symbol?: string
           yahoo_symbol?: string | null
         }

@@ -27,6 +27,7 @@ import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
 import { DeltaPill } from "./delta-pill";
 import { EditablePrice } from "./editable-price";
+import { ListingPicker } from "./listing-picker";
 import { MoneyCell } from "./money-cell";
 import { SupportTag } from "./support-tag";
 
@@ -38,6 +39,7 @@ type PositionColKey =
   | "pru"
   | "pruGross"
   | "currentPrice"
+  | "listing"
   | "invested"
   | "valuation"
   | "dividendsAttributed"
@@ -56,6 +58,7 @@ const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "pru", label: "PRU", num: true, defaultVisible: true },
   { key: "pruGross", label: "PRU brut", num: true, defaultVisible: false },
   { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
+  { key: "listing", label: "Cotation", defaultVisible: true },
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
   { key: "dividendsAttributed", label: "Dividendes", num: true, defaultVisible: false },
@@ -163,6 +166,28 @@ export function PositionsTable({
             <EditablePrice isin={row.original.isin} value={row.original.currentPrice} />
           </div>
         ),
+      },
+      {
+        id: "listing",
+        accessorFn: (p) => p.preferredMic ?? "",
+        header: "Cotation",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const p = row.original;
+          if (!p.instrumentId) {
+            return <span className="text-muted-foreground text-xs">—</span>;
+          }
+          return (
+            <div onClick={(e) => e.stopPropagation()}>
+              <ListingPicker
+                instrumentId={p.instrumentId}
+                isin={p.isin || null}
+                currentMic={p.preferredMic}
+                currentCurrency={p.preferredCurrency}
+              />
+            </div>
+          );
+        },
       },
       {
         id: "invested",
