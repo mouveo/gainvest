@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { OrderRow } from "./aggregate";
+import type { CurrentPrice, OrderRow } from "./aggregate";
 import { replayTransactions } from "./realize";
+
+function eur(n: number): CurrentPrice {
+  return { native: n, eur: n, currency: "EUR", fxToEur: 1 };
+}
 
 function makeOrder(overrides: Partial<OrderRow>): OrderRow {
   return {
@@ -98,7 +102,7 @@ describe("replayTransactions — cash replay", () => {
 
     const { positions } = replayTransactions(
       orders,
-      { FR0010315770: 100 },
+      { FR0010315770: eur(100) },
       TODAY,
     );
 
@@ -156,7 +160,7 @@ describe("replayTransactions — cash replay", () => {
     const fxByCurrency = { EUR: 1, USD: 0.95 };
     const { positions } = replayTransactions(
       orders,
-      { US0231351067: 220 },
+      { US0231351067: eur(220) },
       TODAY,
       fxByCurrency,
     );
@@ -164,12 +168,12 @@ describe("replayTransactions — cash replay", () => {
     const cashLines = positions.filter((p) => p.assetClass === "cash");
     expect(cashLines).toHaveLength(2);
 
-    const eur = cashLines.find((p) => p.currency === "EUR")!;
+    const eurCash = cashLines.find((p) => p.currency === "EUR")!;
     const usd = cashLines.find((p) => p.currency === "USD")!;
 
-    expect(eur.qty).toBeCloseTo(5000, 6);
-    expect(eur.currentPrice).toBe(1);
-    expect(eur.valuation).toBeCloseTo(5000, 6);
+    expect(eurCash.qty).toBeCloseTo(5000, 6);
+    expect(eurCash.currentPrice).toBe(1);
+    expect(eurCash.valuation).toBeCloseTo(5000, 6);
 
     // USD: 10000 deposit - 2000 buy = 8000 USD. Valuation in EUR = 8000 * 0.95
     expect(usd.qty).toBeCloseTo(8000, 6);
@@ -210,7 +214,7 @@ describe("replayTransactions — cash replay", () => {
 
     const { positions } = replayTransactions(
       orders,
-      { US912828YV68: 102 },
+      { US912828YV68: eur(102) },
       TODAY,
     );
 
@@ -242,7 +246,7 @@ describe("replayTransactions — cash replay", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { FR0010315770: 110 }, TODAY);
+    const { positions } = replayTransactions(orders, { FR0010315770: eur(110) }, TODAY);
     const cashLines = positions.filter((p) => p.assetClass === "cash");
     expect(cashLines).toHaveLength(0);
     expect(positions).toHaveLength(1);

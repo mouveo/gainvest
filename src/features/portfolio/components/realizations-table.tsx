@@ -8,6 +8,7 @@ import { DataTable } from "@/components/data-table/data-table";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 
+import type { CurrentPrice } from "../aggregate";
 import { fmtCcy, fmtDateFR, fmtInt, fmtNum, fmtPct } from "../format";
 import { ASSET_CLASS_FACETED_OPTIONS, labelAssetClass } from "../labels";
 import type { PastRealization } from "../realize";
@@ -86,7 +87,7 @@ export function RealizationsTable({
   realizations: PastRealization[];
   withDividends: boolean;
   netOfFees: boolean;
-  priceByIsin: Record<string, number>;
+  priceByIsin: Record<string, CurrentPrice>;
   onVisibleRowsChange?: (rows: PastRealization[]) => void;
 }) {
   useState(() => {
@@ -210,7 +211,7 @@ export function RealizationsTable({
       },
       {
         id: "currentPrice",
-        accessorFn: (r) => priceByIsin[r.isin] ?? Number.NaN,
+        accessorFn: (r) => priceByIsin[r.isin]?.eur ?? Number.NaN,
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Cours actuel" align="right" />
         ),
@@ -239,7 +240,7 @@ export function RealizationsTable({
       {
         id: "spread",
         accessorFn: (r) => {
-          const cp = priceByIsin[r.isin];
+          const cp = priceByIsin[r.isin]?.eur;
           if (cp == null || !Number.isFinite(cp)) return Number.NaN;
           const sp = salePricePerShare(r);
           if (sp <= 0) return Number.NaN;

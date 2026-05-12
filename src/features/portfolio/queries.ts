@@ -2,7 +2,12 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 
-import { aggregateWithRealizations, type OrderRow, type Position } from "./aggregate";
+import {
+  aggregateWithRealizations,
+  type CurrentPrice,
+  type OrderRow,
+  type Position,
+} from "./aggregate";
 import type { PastRealization } from "./realize";
 import type { Support } from "./types";
 
@@ -120,16 +125,22 @@ export async function getOrders(): Promise<OrderRow[]> {
 }
 
 /**
- * Map of `isin -> current_price` for all instruments referenced by the user,
- * converted to EUR using the cached `fx_rates` table. The aggregate layer
- * compares against PRU (already in EUR because the broker CSV is in EUR), so
- * this avoids mixed-currency arithmetic on PnL/valuation.
+ * Map of `isin -> CurrentPrice` for all instruments referenced by the user.
  *
- * Falls back to the average buy price when no quote has been set yet — the
- * fallback is already in EUR because `transactions.price` is derived from the
- * EUR `gross_amount`.
+ * `native` is the price as quoted by the provider in the instrument's own
+ * currency. For `asset_class="bond"` this is the standard "% of par" quote
+ * (e.g. 97.38 means 97.38% of nominal) — bond valuation downstream is
+ * `qty × native / 100 × fxToEur`. For every other asset class, `native` is
+ * the unit price and `eur = native × fxToEur` is the EUR-per-unit shortcut
+ * used by `qty × eur` valuations.
+ *
+ * Falls back to the most recent buy price when no quote has been set yet:
+ * `transactions.price` is stored in the instrument's native currency, so it
+ * maps to `native` directly.
  */
-export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<string, number>> {
+export async function getCurrentPrices(
+  orders: OrderRow[],
+): Promise<Record<string, CurrentPrice>> {
   const supabase = await createClient();
   const tradable = orders.filter((o) => (o.kind === "buy" || o.kind === "sell") && o.isin !== "");
   const isins = Array.from(new Set(tradable.map((o) => o.isin)));
@@ -137,7 +148,7 @@ export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<strin
 
   const { data, error } = await supabase
     .from("instruments")
-    .select("isin, current_price, currency")
+    .select("isin, current_price, currency, asset_class")
     .in("isin", isins);
 
   if (error) throw error;
@@ -162,20 +173,33 @@ export async function getCurrentPrices(orders: OrderRow[]): Promise<Record<strin
     }
   }
 
-  const map: Record<string, number> = {};
+  const assetClassByIsin = new Map<string, string>();
+  const map: Record<string, CurrentPrice> = {};
   for (const row of data ?? []) {
-    if (!row.isin || row.current_price == null) continue;
+    if (!row.isin) continue;
     const ccy = (row.currency ?? "EUR").toUpperCase();
-    const rate = fxByCcy[ccy] ?? 1; // unknown currency → no conversion (best effort)
-    map[row.isin] = Number(row.current_price) * rate;
+    const fxToEur = fxByCcy[ccy] ?? 1; // unknown currency → no conversion (best effort)
+    if (row.asset_class) assetClassByIsin.set(row.isin, row.asset_class);
+    if (row.current_price == null) continue;
+    const native = Number(row.current_price);
+    const eur = row.asset_class === "bond" ? (native / 100) * fxToEur : native * fxToEur;
+    map[row.isin] = { native, eur, currency: ccy, fxToEur };
   }
 
   // Fallback: use the most recent buy price for instruments without a quote.
-  // `tradable[i].price` is already EUR (computed from gross_amount in EUR / quantity).
+  // `transactions.price` is stored in native currency. For bonds it's already
+  // expressed in % of par (the order sheet captures the quote that way), so
+  // the bond/non-bond branching mirrors the live-quote path.
   for (const isin of isins) {
     if (map[isin] != null) continue;
     const fallback = tradable.find((o) => o.isin === isin && o.kind === "buy");
-    if (fallback && fallback.price != null) map[isin] = fallback.price;
+    if (!fallback || fallback.price == null) continue;
+    const native = fallback.price;
+    const ccy = (fallback.currency ?? "EUR").toUpperCase();
+    const fxToEur = fxByCcy[ccy] ?? 1;
+    const assetClass = assetClassByIsin.get(isin) ?? fallback.assetClass;
+    const eur = assetClass === "bond" ? (native / 100) * fxToEur : native * fxToEur;
+    map[isin] = { native, eur, currency: ccy, fxToEur };
   }
 
   return map;
@@ -228,7 +252,7 @@ export async function getPositions(): Promise<{
   orders: OrderRow[];
   positions: Position[];
   realizations: PastRealization[];
-  priceByIsin: Record<string, number>;
+  priceByIsin: Record<string, CurrentPrice>;
   pricesUpdatedAt: string | null;
 }> {
   const orders = await getOrders();

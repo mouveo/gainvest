@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { OrderRow } from "./aggregate";
+import type { CurrentPrice, OrderRow } from "./aggregate";
 import { replayTransactions } from "./realize";
+
+function eur(n: number): CurrentPrice {
+  return { native: n, eur: n, currency: "EUR", fxToEur: 1 };
+}
 
 function makeOrder(overrides: Partial<OrderRow>): OrderRow {
   return {
@@ -54,7 +58,7 @@ describe("replayTransactions", () => {
 
     const { positions, realizations } = replayTransactions(
       orders,
-      { FR0010315770: 200 },
+      { FR0010315770: eur(200) },
       TODAY,
     );
 
@@ -100,7 +104,7 @@ describe("replayTransactions", () => {
 
     const { realizations, positions } = replayTransactions(
       orders,
-      { FR0010315770: 250 },
+      { FR0010315770: eur(250) },
       TODAY,
     );
 
@@ -155,7 +159,7 @@ describe("replayTransactions", () => {
 
     const { positions, realizations } = replayTransactions(
       orders,
-      { FR0010315770: 200 },
+      { FR0010315770: eur(200) },
       TODAY,
     );
 
@@ -188,7 +192,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { FR0010315770: 250 }, TODAY);
+    const { positions } = replayTransactions(orders, { FR0010315770: eur(250) }, TODAY);
 
     expect(positions).toHaveLength(1);
     expect(positions[0]!.qty).toBe(20);
@@ -203,7 +207,7 @@ describe("replayTransactions", () => {
       makeOrder({ id: "b", support: "PEA", quantity: 7, price: 110, grossAmount: 770 }),
     ];
 
-    const { positions } = replayTransactions(orders, { FR0010315770: 120 }, TODAY);
+    const { positions } = replayTransactions(orders, { FR0010315770: eur(120) }, TODAY);
     expect(positions).toHaveLength(2);
     expect(positions.find((p) => p.support === "CTO")?.qty).toBe(5);
     expect(positions.find((p) => p.support === "PEA")?.qty).toBe(7);
@@ -258,7 +262,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { realizations } = replayTransactions(orders, { FR0010315770: 200 }, TODAY);
+    const { realizations } = replayTransactions(orders, { FR0010315770: eur(200) }, TODAY);
 
     expect(realizations).toHaveLength(1);
     expect(realizations[0]!.assetClass).toBe("equity");
@@ -285,7 +289,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { realizations } = replayTransactions(orders, { FR0010315770: 200 }, TODAY);
+    const { realizations } = replayTransactions(orders, { FR0010315770: eur(200) }, TODAY);
 
     expect(realizations).toHaveLength(1);
     const r = realizations[0]!;
@@ -337,7 +341,7 @@ describe("replayTransactions", () => {
 
     const { realizations, positions } = replayTransactions(
       orders,
-      { FR0010315770: 200 },
+      { FR0010315770: eur(200) },
       TODAY,
     );
 
@@ -369,7 +373,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { FR0010315770: 121 }, TODAY);
+    const { positions } = replayTransactions(orders, { FR0010315770: eur(121) }, TODAY);
     expect(positions).toHaveLength(1);
     expect(positions[0]!.xirrCapital).toBeCloseTo(0.1, 2);
   });
@@ -410,7 +414,7 @@ describe("replayTransactions", () => {
 
     const { positions } = replayTransactions(
       orders,
-      { FR0010315770: 110, US0231351067: 220 },
+      { FR0010315770: eur(110), US0231351067: eur(220) },
       TODAY,
     );
 
@@ -456,7 +460,7 @@ describe("replayTransactions", () => {
 
     const { positions } = replayTransactions(
       orders,
-      { US0231351067: 100, DE0007164600: 300 },
+      { US0231351067: eur(100), DE0007164600: eur(300) },
       TODAY,
     );
 
@@ -502,7 +506,7 @@ describe("replayTransactions", () => {
 
     const { positions, realizations } = replayTransactions(
       orders,
-      { US0231351067: 200 },
+      { US0231351067: eur(200) },
       TODAY,
     );
 
@@ -544,7 +548,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0231351067: 200 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0231351067: eur(200) }, TODAY);
     expect(positions).toHaveLength(1);
     expect(positions[0]!.holdingFeesAttributed).toBeCloseTo(0, 8);
   });
@@ -573,7 +577,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0378331005: 200 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0378331005: eur(200) }, TODAY);
 
     expect(positions).toHaveLength(2);
     const bd = positions.find((p) => p.broker === "Bourse Direct")!;
@@ -618,7 +622,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0378331005: 200 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0378331005: eur(200) }, TODAY);
 
     const bd = positions.find((p) => p.broker === "Bourse Direct")!;
     const ibkr = positions.find((p) => p.broker === "IBKR")!;
@@ -660,7 +664,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0378331005: 200 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0378331005: eur(200) }, TODAY);
 
     const bd = positions.find((p) => p.broker === "Bourse Direct")!;
     const ibkr = positions.find((p) => p.broker === "IBKR")!;
@@ -705,7 +709,7 @@ describe("replayTransactions", () => {
 
     const { positions, realizations } = replayTransactions(
       orders,
-      { US0378331005: 220 },
+      { US0378331005: eur(220) },
       TODAY,
     );
 
@@ -757,7 +761,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0378331005: 110 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0378331005: eur(110) }, TODAY);
 
     const bd = positions.find((p) => p.broker === "Bourse Direct")!;
     const ibkr = positions.find((p) => p.broker === "IBKR")!;
@@ -802,7 +806,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0378331005: 110 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0378331005: eur(110) }, TODAY);
 
     const bd = positions.find((p) => p.broker === "Bourse Direct")!;
     const ibkr = positions.find((p) => p.broker === "IBKR")!;
@@ -836,7 +840,7 @@ describe("replayTransactions", () => {
       }),
     ];
 
-    const { positions } = replayTransactions(orders, { US0231351067: 121 }, TODAY);
+    const { positions } = replayTransactions(orders, { US0231351067: eur(121) }, TODAY);
     const p = positions[0]!;
     const feeFlow = p.cashFlowsCapitalNetFees.find(
       (f) => f.date === "2025-05-12" && f.amount < 0,

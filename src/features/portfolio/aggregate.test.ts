@@ -6,9 +6,14 @@ import {
   computeMovementTotals,
   computeRealizationTotals,
   computeTotals,
+  type CurrentPrice,
   type OrderRow,
 } from "./aggregate";
 import type { PastRealization } from "./realize";
+
+function eur(n: number): CurrentPrice {
+  return { native: n, eur: n, currency: "EUR", fxToEur: 1 };
+}
 
 function makeOrder(overrides: Partial<OrderRow>): OrderRow {
   return {
@@ -69,7 +74,7 @@ describe("aggregate", () => {
       makeOrder({ id: "b", isin: "FR0010315770", support: "PEA", quantity: 7, price: 110 }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
 
     expect(positions).toHaveLength(2);
 
@@ -93,7 +98,7 @@ describe("aggregate", () => {
       makeOrder({ isin: "FR0010315770", support: "PEA", quantity: 4, price: 50 }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 75 });
+    const positions = aggregate(orders, { FR0010315770: eur(75) });
 
     expect(positions).toHaveLength(1);
     expect(positions[0]!.currentPrice).toBe(75);
@@ -106,7 +111,7 @@ describe("aggregate", () => {
       makeOrder({ id: "b", isin: "FR0010315770", support: "CTO", quantity: 2, price: 110 }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
 
     expect(positions).toHaveLength(1);
     expect(positions[0]!.support).toBe("CTO");
@@ -137,7 +142,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
 
     expect(positions).toHaveLength(1);
     const p = positions[0]!;
@@ -158,7 +163,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
 
     expect(positions).toHaveLength(1);
     expect(positions[0]!.qty).toBe(5);
@@ -185,7 +190,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const result = aggregateWithRealizations(orders, { FR0000000001: 200 });
+    const result = aggregateWithRealizations(orders, { FR0000000001: eur(200) });
 
     expect(result.positions).toHaveLength(1);
     expect(result.positions[0]!.qty).toBe(6);
@@ -214,7 +219,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0000000001: 110 });
+    const positions = aggregate(orders, { FR0000000001: eur(110) });
     const p = positions[0]!;
 
     expect(p.invested).toBeCloseTo(1000, 8);
@@ -250,7 +255,7 @@ describe("aggregate", () => {
     ];
 
     const today = new Date("2026-05-12T00:00:00Z");
-    const positions = aggregate(orders, { FR0000000001: 121 }, today);
+    const positions = aggregate(orders, { FR0000000001: eur(121) }, today);
     const totals = computeTotals(positions, today);
 
     expect(totals.invested).toBeCloseTo(1000, 6);
@@ -277,7 +282,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
     expect(positions).toHaveLength(1);
     expect(positions[0]!.broker).toBe("Bourse Direct");
   });
@@ -304,7 +309,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
     expect(positions).toHaveLength(2);
     const bd = positions.find((p) => p.broker === "Bourse Direct")!;
     const ibkr = positions.find((p) => p.broker === "IBKR")!;
@@ -515,7 +520,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0010315770: 120 });
+    const positions = aggregate(orders, { FR0010315770: eur(120) });
     const cash = positions.find((p) => p.assetClass === "cash");
     expect(cash).toBeDefined();
     expect(cash!.qty).toBeCloseTo(4000, 6);
@@ -547,7 +552,7 @@ describe("aggregate", () => {
     ];
 
     const today = new Date("2026-05-12T00:00:00Z");
-    const positions = aggregate(orders, { FR0000000001: 110 }, today);
+    const positions = aggregate(orders, { FR0000000001: eur(110) }, today);
     const totals = computeTotals(positions, today);
 
     // 2 lines: 1 instrument + 1 cash.
@@ -606,7 +611,7 @@ describe("aggregate", () => {
       }),
     ];
 
-    const positions = aggregate(orders, { FR0000000001: 110 });
+    const positions = aggregate(orders, { FR0000000001: eur(110) });
     const totals = computeTotals(positions);
 
     // dividendsTotal = instrument dividend only (20), not cash interest (12).
@@ -650,7 +655,7 @@ describe("aggregate", () => {
     const today = new Date("2026-05-12T00:00:00Z");
     const positions = aggregate(
       orders,
-      { US0231351067: 121, US88160R1014: 242 },
+      { US0231351067: eur(121), US88160R1014: eur(242) },
       today,
     );
     const totals = computeTotals(positions, today);
@@ -663,5 +668,73 @@ describe("aggregate", () => {
     expect(Number.isFinite(totals.xirrTotalNetFees)).toBe(true);
     expect(totals.xirrCapitalNetFees).toBeLessThan(totals.xirrCapital);
     expect(totals.xirrTotalNetFees).toBeLessThan(totals.xirrTotal);
+  });
+
+  it("propagates pruPctPar and currentPctPar from the replay for bond positions", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b1",
+        isin: "US023135CV68",
+        instrumentName: "AMZN 4.5 2030",
+        assetClass: "bond",
+        currency: "USD",
+        fxRate: 0.9,
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 56_000,
+        price: 98.948,
+        grossAmount: 55_410.88,
+        fees: 21.5,
+      }),
+    ];
+
+    const positions = aggregate(orders, {
+      US023135CV68: {
+        native: 97.383,
+        eur: (97.383 / 100) * 0.9,
+        currency: "USD",
+        fxToEur: 0.9,
+      },
+    });
+
+    expect(positions).toHaveLength(1);
+    const p = positions[0]!;
+    expect(p.pruPctPar).toBeCloseTo(98.948, 8);
+    expect(p.currentPctPar).toBeCloseTo(97.383, 8);
+    expect(p.valuation).toBeCloseTo((56_000 * 97.383 * 0.9) / 100, 4);
+  });
+
+  it("leaves pruPctPar and currentPctPar null for non-bond and cash positions", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 5_000,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+        tradeDate: "2024-05-12",
+      }),
+      makeOrder({
+        id: "b1",
+        isin: "FR0010315770",
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1_000,
+        broker: "Bourse Direct",
+        assetClass: "etf",
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0010315770: eur(110) });
+    const etf = positions.find((p) => p.assetClass === "etf")!;
+    const cash = positions.find((p) => p.assetClass === "cash")!;
+
+    expect(etf.pruPctPar).toBeNull();
+    expect(etf.currentPctPar).toBeNull();
+    expect(cash.pruPctPar).toBeNull();
+    expect(cash.currentPctPar).toBeNull();
   });
 });
