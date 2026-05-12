@@ -11,7 +11,15 @@ export type Market =
   | "lisbon"
   | "other";
 
-export type ParsedKind = "buy" | "sell" | "dividend" | "fee";
+export type ParsedKind =
+  | "buy"
+  | "sell"
+  | "dividend"
+  | "interest"
+  | "fee"
+  | "tax"
+  | "deposit"
+  | "withdrawal";
 
 export type FeeBreakdown = {
   brokerage: number;
@@ -34,6 +42,13 @@ export type ParsedRow = {
   needsAttention: boolean;
   attentionReason?: string;
   inferredMarket?: Market;
+  // Optional fields populated by brokers providing richer data (IBKR, etc.).
+  externalId?: string | null;
+  symbol?: string | null;
+  name?: string | null;
+  currency?: string;
+  fees?: number;
+  broker?: string;
 };
 
 export type FeeCalculatorArgs = {
@@ -46,7 +61,7 @@ export type FeeCalculatorArgs = {
 export type BrokerProfile = {
   id: string;
   name: string;
-  csvParser: (csvText: string, options: { support: Support }) => ParsedRow[];
-  feeCalculator: (grossAmount: number, args: FeeCalculatorArgs) => FeeBreakdown;
-  inferMarket: (isin: string) => Market;
+  fileParser: (fileText: string, options: { support: Support }) => ParsedRow[];
+  feeCalculator?: (grossAmount: number, args: FeeCalculatorArgs) => FeeBreakdown;
+  inferMarket?: (isin: string) => Market;
 };

@@ -6,7 +6,7 @@ import { lookupIsin } from "@/lib/openfigi";
 import { createClient } from "@/lib/supabase/server";
 
 import { getBroker } from "../brokers/registry";
-import type { ParsedRow } from "../brokers/types";
+import type { ParsedKind, ParsedRow } from "../brokers/types";
 import { getDefaultAccountId } from "../queries";
 import { SUPPORTS, type Support } from "../types";
 
@@ -47,7 +47,8 @@ export async function importBrokerOrders(
   support: Support,
   rows: ParsedRow[],
 ): Promise<ImportResult> {
-  if (!getBroker(brokerId)) return { ok: false, error: "Courtier inconnu." };
+  const brokerProfile = getBroker(brokerId);
+  if (!brokerProfile) return { ok: false, error: "Courtier inconnu." };
   if (!SUPPORTS.includes(support)) return { ok: false, error: "Support invalide." };
   if (rows.length === 0) return { ok: true, inserted: 0, skipped: 0, failed: [] };
 
@@ -134,20 +135,22 @@ export async function importBrokerOrders(
     byIsin.set(isin, upserted);
   }
 
-  // Fenêtre min/max pour la dédup.
+  // Fenêtre min/max pour la dédup. Charger external_id ET clés synthétiques sur la fenêtre.
   const dates = valid.map((r) => r.date).filter(Boolean);
-  let existingKeys = new Set<string>();
+  const existingKeys = new Set<string>();
+  const existingExternalIds = new Set<string>();
+
   if (dates.length > 0) {
     const minDate = dates.reduce((a, b) => (a < b ? a : b));
     const maxDate = dates.reduce((a, b) => (a > b ? a : b));
     const { data: existingTx, error: existingErr } = await supabase
       .from("transactions")
-      .select("instrument_id, trade_date, kind, quantity, gross_amount, support")
+      .select("instrument_id, trade_date, kind, quantity, gross_amount, support, external_id")
       .gte("trade_date", minDate)
       .lte("trade_date", maxDate);
     if (existingErr) return { ok: false, error: existingErr.message };
-    existingKeys = new Set(
-      (existingTx ?? []).map((t) =>
+    for (const t of existingTx ?? []) {
+      existingKeys.add(
         dedupKey(
           t.instrument_id,
           t.trade_date,
@@ -156,15 +159,16 @@ export async function importBrokerOrders(
           Number(t.gross_amount),
           t.support,
         ),
-      ),
-    );
+      );
+      if (t.external_id) existingExternalIds.add(t.external_id);
+    }
   }
 
   type Insert = {
     user_id: string;
     account_id: string;
     instrument_id: string | null;
-    kind: "buy" | "sell" | "dividend" | "fee";
+    kind: ParsedKind;
     trade_date: string;
     quantity: number | null;
     price: number | null;
@@ -175,6 +179,7 @@ export async function importBrokerOrders(
     notes: string | null;
     broker: string;
     support: Support;
+    external_id: string | null;
   };
 
   const toInsert: Insert[] = [];
@@ -182,31 +187,50 @@ export async function importBrokerOrders(
 
   for (const row of valid) {
     let instrumentId: string | null = null;
-    let currency = "EUR";
+    let instrumentCurrency = "EUR";
 
     if (row.isin) {
       const inst = byIsin.get(row.isin);
       if (!inst) {
-        failed.push({
-          row: row.rawLine,
-          reason: `ISIN ${row.isin} introuvable (OpenFIGI a échoué)`,
-        });
-        continue;
+        // For cash-only rows (deposit/withdrawal/interest/tax) ISIN is optional;
+        // skip the OpenFIGI miss only when the row really needs an instrument.
+        if (row.kind === "buy" || row.kind === "sell" || row.kind === "dividend") {
+          failed.push({
+            row: row.rawLine,
+            reason: `ISIN ${row.isin} introuvable (OpenFIGI a échoué)`,
+          });
+          continue;
+        }
+      } else {
+        instrumentId = inst.id;
+        instrumentCurrency = inst.currency;
       }
-      instrumentId = inst.id;
-      currency = inst.currency;
     }
 
     const grossAmount = round2(row.grossAmount ?? row.totalAmount);
-    const fees = row.computedFees ? round2(row.computedFees.brokerage) : 0;
+    const fees = row.computedFees
+      ? round2(row.computedFees.brokerage)
+      : round2(row.fees ?? 0);
     const tax = row.computedFees ? round2(row.computedFees.ttf) : 0;
 
-    const key = dedupKey(instrumentId, row.date, row.kind, row.quantity, grossAmount, support);
-    if (existingKeys.has(key)) {
+    // Dedup: prefer external_id (IBKR), fall back to synthetic key (BD).
+    if (row.externalId && existingExternalIds.has(row.externalId)) {
       skipped += 1;
       continue;
     }
-    existingKeys.add(key);
+    if (!row.externalId) {
+      const key = dedupKey(instrumentId, row.date, row.kind, row.quantity, grossAmount, support);
+      if (existingKeys.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      existingKeys.add(key);
+    } else {
+      existingExternalIds.add(row.externalId);
+    }
+
+    const currency = row.currency ?? (row.kind === "fee" ? "EUR" : instrumentCurrency);
+    const notes = row.kind === "fee" ? row.description : null;
 
     toInsert.push({
       user_id: user.id,
@@ -219,10 +243,11 @@ export async function importBrokerOrders(
       gross_amount: grossAmount,
       fees,
       tax,
-      currency: row.kind === "fee" ? "EUR" : currency,
-      notes: row.kind === "fee" ? row.description : null,
-      broker: "Bourse Direct",
+      currency,
+      notes,
+      broker: row.broker ?? brokerProfile.name,
       support,
+      external_id: row.externalId ?? null,
     });
   }
 

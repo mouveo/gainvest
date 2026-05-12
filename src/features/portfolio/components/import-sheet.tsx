@@ -50,7 +50,11 @@ const KIND_LABEL: Record<ParsedRow["kind"], string> = {
   buy: "Achat",
   sell: "Vente",
   dividend: "Coupon",
+  interest: "Intérêts",
   fee: "Frais",
+  tax: "Taxe",
+  deposit: "Dépôt",
+  withdrawal: "Retrait",
 };
 
 const KIND_CLASS: Record<ParsedRow["kind"], string> = {
@@ -58,7 +62,14 @@ const KIND_CLASS: Record<ParsedRow["kind"], string> = {
   sell: "border-danger/30 bg-danger/10 text-danger",
   dividend:
     "border-blue-300/40 bg-blue-50 text-blue-700 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300",
+  interest:
+    "border-sky-300/40 bg-sky-50 text-sky-700 dark:border-sky-700/40 dark:bg-sky-950/30 dark:text-sky-300",
   fee: "border-warning/30 bg-warning/10 text-warning",
+  tax: "border-amber-300/40 bg-amber-50 text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300",
+  deposit:
+    "border-emerald-300/40 bg-emerald-50 text-emerald-700 dark:border-emerald-700/40 dark:bg-emerald-950/30 dark:text-emerald-300",
+  withdrawal:
+    "border-rose-300/40 bg-rose-50 text-rose-700 dark:border-rose-700/40 dark:bg-rose-950/30 dark:text-rose-300",
 };
 
 export function ImportSheet() {
@@ -85,7 +96,7 @@ export function ImportSheet() {
       return;
     }
     try {
-      setRows(b.csvParser(text, { support: sup }));
+      setRows(b.fileParser(text, { support: sup }));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur de parsing");
@@ -159,13 +170,14 @@ export function ImportSheet() {
     >
       <SheetTrigger render={<Button size="sm" variant="outline" />}>
         <FileUp className="size-4" />
-        Importer un CSV
+        Importer un fichier
       </SheetTrigger>
       <SheetContent side="right" className="!w-[min(80vw,1400px)] !max-w-none overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>Importer un CSV de courtier</SheetTitle>
+          <SheetTitle>Importer un fichier de courtier</SheetTitle>
           <SheetDescription>
-            Charge un export CSV, vérifie le calcul automatique des frais, puis importe.
+            Charge un export (CSV pour Bourse Direct, XML Activity Flex Query pour Interactive
+            Brokers), vérifie les lignes, puis importe.
           </SheetDescription>
         </SheetHeader>
 
@@ -204,11 +216,11 @@ export function ImportSheet() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="csv-file">Fichier CSV</Label>
+            <Label htmlFor="import-file">Fichier</Label>
             <Input
-              id="csv-file"
+              id="import-file"
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.xml,text/csv,application/xml,text/xml"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void onFile(f);
@@ -216,6 +228,10 @@ export function ImportSheet() {
             />
             {filename ? (
               <p className="text-muted-foreground text-xs">{filename}</p>
+            ) : brokerId === "interactive-brokers" ? (
+              <p className="text-muted-foreground text-xs">
+                Interactive Brokers : Activity Flex Query au format XML (Trades + CashTransactions).
+              </p>
             ) : (
               <p className="text-muted-foreground text-xs">
                 Bourse Direct : colonnes Date, Quoi, ISIN, Description, Quantite, Montant.
