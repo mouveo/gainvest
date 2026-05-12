@@ -1,10 +1,18 @@
 "use client";
 
-import { FileUp, Upload } from "lucide-react";
+import { AlertTriangle, FileUp, Upload } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -35,6 +43,7 @@ import {
 
 import { cn } from "@/lib/utils";
 
+import { deleteTransactionsByBroker } from "../actions";
 import { getBroker, listBrokers } from "../brokers/registry";
 import type { ParsedRow } from "../brokers/types";
 import { fmtCcy } from "../format";
@@ -78,10 +87,14 @@ export function ImportSheet() {
   const [support, setSupport] = useState<Support>("CTO");
   const [csvText, setCsvText] = useState<string>("");
   const [rows, setRows] = useState<ParsedRow[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [filename, setFilename] = useState<string>("");
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPending, startResetTransition] = useTransition();
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   const broker = getBroker(brokerId);
   const brokers = listBrokers();
@@ -93,14 +106,20 @@ export function ImportSheet() {
     const b = getBroker(bId);
     if (!b || !text) {
       setRows([]);
+      setWarnings([]);
       return;
     }
     try {
-      setRows(b.fileParser(text, { support: sup }));
+      const parsed = b.fileParser(text, { support: sup });
+      const nextRows = Array.isArray(parsed) ? parsed : parsed.rows;
+      const nextWarnings = Array.isArray(parsed) ? [] : parsed.warnings;
+      setRows(nextRows);
+      setWarnings(nextWarnings);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur de parsing");
       setRows([]);
+      setWarnings([]);
     }
   };
 
@@ -146,7 +165,7 @@ export function ImportSheet() {
     setError(null);
     setResult(null);
     startTransition(async () => {
-      const res = await importBrokerOrders(brokerId, support, importable);
+      const res = await importBrokerOrders(brokerId, support, importable, warnings);
       setResult(res);
       if (!res.ok) setError(res.error);
     });
@@ -155,9 +174,28 @@ export function ImportSheet() {
   const reset = () => {
     setCsvText("");
     setRows([]);
+    setWarnings([]);
     setFilename("");
     setResult(null);
     setError(null);
+    setResetMessage(null);
+  };
+
+  const onConfirmReset = () => {
+    if (!broker) return;
+    const name = broker.name;
+    setResetMessage(null);
+    startResetTransition(async () => {
+      const res = await deleteTransactionsByBroker(name);
+      if ("deleted" in res) {
+        setResetMessage(
+          `${res.deleted} transaction${res.deleted > 1 ? "s" : ""} ${name} supprimée${res.deleted > 1 ? "s" : ""}.`,
+        );
+      } else {
+        setResetMessage(`Erreur : ${res.error}`);
+      }
+      setResetOpen(false);
+    });
   };
 
   return (
@@ -197,6 +235,15 @@ export function ImportSheet() {
                   ))}
                 </SelectContent>
               </Select>
+              {broker ? (
+                <button
+                  type="button"
+                  onClick={() => setResetOpen(true)}
+                  className="text-muted-foreground hover:text-destructive self-start text-xs underline underline-offset-2"
+                >
+                  Réinitialiser tous les imports {broker.name}
+                </button>
+              ) : null}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="support">Support</Label>
@@ -238,6 +285,23 @@ export function ImportSheet() {
               </p>
             )}
           </div>
+
+          {resetMessage ? (
+            <div className="border-border bg-muted/40 rounded-md border px-3 py-2 text-xs">
+              {resetMessage}
+            </div>
+          ) : null}
+
+          {warnings.length > 0 ? (
+            <div className="border-warning/30 bg-warning/10 text-warning flex items-start gap-2 rounded-md border p-3 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <div className="flex flex-col gap-0.5">
+                {warnings.map((w) => (
+                  <span key={w}>{w}</span>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {rows.length > 0 ? (
             <>
@@ -382,6 +446,37 @@ export function ImportSheet() {
               : `Importer ${importable.length} ligne${importable.length > 1 ? "s" : ""}`}
           </Button>
         </SheetFooter>
+
+        <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Réinitialiser les imports {broker?.name ?? ""} ?</DialogTitle>
+              <DialogDescription>
+                Cette action supprime définitivement toutes les transactions liées à ce courtier
+                (achats, ventes, coupons, frais, retenues à la source) pour ton compte. Tu pourras
+                réimporter ton CSV ensuite.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setResetOpen(false)}
+                disabled={resetPending}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={onConfirmReset}
+                disabled={resetPending}
+              >
+                {resetPending ? "Suppression…" : "Supprimer"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </SheetContent>
     </Sheet>
   );

@@ -36,6 +36,7 @@ type PositionColKey =
   | "type"
   | "qty"
   | "pru"
+  | "pruGross"
   | "currentPrice"
   | "invested"
   | "valuation"
@@ -53,6 +54,7 @@ const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "type", label: "Type", defaultVisible: true },
   { key: "qty", label: "Quantité", num: true, defaultVisible: true },
   { key: "pru", label: "PRU", num: true, defaultVisible: true },
+  { key: "pruGross", label: "PRU brut", num: true, defaultVisible: false },
   { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
@@ -139,6 +141,16 @@ export function PositionsTable({
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
             {fmtNum(row.original.pru, row.original.pru < 50 ? 3 : 2)} €
+          </div>
+        ),
+      },
+      {
+        id: "pruGross",
+        accessorFn: (p) => p.pruGross,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="PRU brut" />,
+        cell: ({ row }) => (
+          <div className="text-muted-foreground text-right font-mono tabular-nums">
+            {fmtCcy(row.original.pruGross, row.original.pruGross < 50 ? 3 : 2)}
           </div>
         ),
       },
