@@ -1,5 +1,12 @@
 import type { FilterFn, Row } from "@tanstack/react-table";
 
+declare module "@tanstack/react-table" {
+  interface FilterFns {
+    multiSelect: FilterFn<unknown>;
+    dateRange: FilterFn<unknown>;
+  }
+}
+
 export type MultiSelectFilterValue = string[];
 
 export const multiSelectFilterFn: FilterFn<unknown> = <TData>(

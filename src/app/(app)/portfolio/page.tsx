@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function PortfolioPage() {
-  const { orders, positions, realizations, pricesUpdatedAt } = await getPositions();
+  const { orders, positions, realizations, priceByIsin, pricesUpdatedAt } = await getPositions();
   const totals = computeTotals(positions);
 
   return (
@@ -20,6 +20,7 @@ export default async function PortfolioPage() {
       positions={positions}
       orders={orders}
       realizations={realizations}
+      priceByIsin={priceByIsin}
       totals={totals}
       pricesUpdatedAt={pricesUpdatedAt}
     />

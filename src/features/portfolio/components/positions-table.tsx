@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { useMemo } from "react";
+import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -12,45 +13,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DataTable } from "@/components/data-table/data-table";
+import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
+import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { cn } from "@/lib/utils";
 
 import type { Position } from "../aggregate";
 import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
+import { ASSET_CLASS_FACETED_OPTIONS, labelAssetClass } from "../labels";
+import { SUPPORTS } from "../types";
 import { ColumnsPicker } from "./columns/columns-picker";
-import type { ColumnDef } from "./columns/types";
+import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
 import { DeltaPill } from "./delta-pill";
 import { EditablePrice } from "./editable-price";
 import { MoneyCell } from "./money-cell";
 import { SupportTag } from "./support-tag";
-
-type SortKey =
-  | "instrumentName"
-  | "qty"
-  | "pru"
-  | "currentPrice"
-  | "invested"
-  | "valuation"
-  | "pnl"
-  | "pnlPct"
-  | "pnlAnnualized"
-  | "dividendsAttributed"
-  | "holdingFees"
-  | "pnlTotal";
-
-const NUMERIC: SortKey[] = [
-  "qty",
-  "pru",
-  "currentPrice",
-  "invested",
-  "valuation",
-  "pnl",
-  "pnlPct",
-  "pnlAnnualized",
-  "dividendsAttributed",
-  "holdingFees",
-  "pnlTotal",
-];
 
 type PositionColKey =
   | "instrument"
@@ -69,7 +47,7 @@ type PositionColKey =
   | "pnlAnnualized"
   | "held";
 
-const POSITION_COLUMNS: readonly ColumnDef<PositionColKey>[] = [
+const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "instrument", label: "Instrument", always: true },
   { key: "support", label: "Support", defaultVisible: true },
   { key: "type", label: "Type", defaultVisible: true },
@@ -78,13 +56,13 @@ const POSITION_COLUMNS: readonly ColumnDef<PositionColKey>[] = [
   { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
-  { key: "dividendsAttributed", label: "Dividendes", num: true, defaultVisible: true },
-  { key: "holdingFees", label: "Frais détention", num: true, defaultVisible: false },
+  { key: "dividendsAttributed", label: "Dividendes", num: true, defaultVisible: false },
+  { key: "holdingFees", label: "Frais de détention", num: true, defaultVisible: false },
   { key: "pnl", label: "PnL", num: true, defaultVisible: true },
-  { key: "pnlTotal", label: "PnL + div", num: true, defaultVisible: false },
+  { key: "pnlTotal", label: "PnL total", num: true, defaultVisible: false },
   { key: "pnlPct", label: "PnL %", num: true, defaultVisible: true },
-  { key: "pnlAnnualized", label: "PnL / an", num: true, defaultVisible: true },
-  { key: "held", label: "Détention", num: true, defaultVisible: true },
+  { key: "pnlAnnualized", label: "PnL annualisé", num: true, defaultVisible: true },
+  { key: "held", label: "Durée de détention", num: true, defaultVisible: true },
 ];
 
 export function PositionsTable({
@@ -96,378 +74,335 @@ export function PositionsTable({
   withDividends?: boolean;
   netOfFees?: boolean;
 }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
-    key: "valuation",
-    dir: "desc",
-  });
-  const [openPositions, setOpenPositions] = useState<Record<string, boolean>>({});
-
-  const { shown, toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
+  const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
     "gainvest:positions:visible-columns",
     POSITION_COLUMNS,
   );
 
-  const tableColSpan = visibleCount + 1;
-
-  const sorted = useMemo(() => {
-    return positions.slice().sort((a, b) => {
-      const av = a[sort.key];
-      const bv = b[sort.key];
-      if (typeof av === "string" && typeof bv === "string") {
-        return sort.dir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      const an = Number(av);
-      const bn = Number(bv);
-      return sort.dir === "asc" ? an - bn : bn - an;
-    });
-  }, [positions, sort]);
-
-  const toggleSort = (key: SortKey) =>
-    setSort((s) => ({ key, dir: s.key === key && s.dir === "desc" ? "asc" : "desc" }));
+  const columns = useMemo<TanstackColumnDef<Position>[]>(
+    () => [
+      {
+        id: "instrument",
+        accessorFn: (p) => p.instrumentName,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+        cell: ({ row }) => {
+          const p = row.original;
+          return (
+            <div className="flex items-center gap-2">
+              <ChevronRight
+                aria-hidden
+                className={cn(
+                  "text-muted-foreground size-4 shrink-0 transition-transform",
+                  row.getIsExpanded() && "rotate-90",
+                )}
+              />
+              <div className="flex flex-col">
+                <span className="font-medium">{p.instrumentName}</span>
+                <span className="text-muted-foreground font-mono text-xs">
+                  {p.isin} · {p.currency}
+                </span>
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        id: "support",
+        accessorFn: (p) => p.support,
+        header: "Support",
+        cell: ({ row }) => <SupportTag support={row.original.support} />,
+        enableSorting: false,
+        filterFn: "multiSelect",
+      },
+      {
+        id: "type",
+        accessorFn: (p) => p.assetClass,
+        header: "Type",
+        cell: ({ row }) => (
+          <Badge variant="outline">{labelAssetClass(row.original.assetClass)}</Badge>
+        ),
+        enableSorting: false,
+        filterFn: "multiSelect",
+      },
+      {
+        id: "qty",
+        accessorFn: (p) => p.qty,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Quantité" />,
+        cell: ({ row }) => (
+          <div className="text-right font-mono tabular-nums">{fmtInt(row.original.qty)}</div>
+        ),
+      },
+      {
+        id: "pru",
+        accessorFn: (p) => p.pru,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="PRU" />,
+        cell: ({ row }) => (
+          <div className="text-right font-mono tabular-nums">
+            {fmtNum(row.original.pru, row.original.pru < 50 ? 3 : 2)} €
+          </div>
+        ),
+      },
+      {
+        id: "currentPrice",
+        accessorFn: (p) => p.currentPrice,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Cours actuel" />,
+        cell: ({ row }) => (
+          <div className="text-right" onClick={(e) => e.stopPropagation()}>
+            <EditablePrice isin={row.original.isin} value={row.original.currentPrice} />
+          </div>
+        ),
+      },
+      {
+        id: "invested",
+        accessorFn: (p) => p.invested,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Investi" />,
+        cell: ({ row }) => (
+          <div className="text-right font-mono tabular-nums">{fmtCcy(row.original.invested, 0)}</div>
+        ),
+      },
+      {
+        id: "valuation",
+        accessorFn: (p) => p.valuation,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Valorisation" />,
+        cell: ({ row }) => (
+          <div className="text-right font-mono font-medium tabular-nums">
+            {fmtCcy(row.original.valuation, 0)}
+          </div>
+        ),
+      },
+      {
+        id: "dividendsAttributed",
+        accessorFn: (p) => p.dividendsAttributed,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Dividendes" />,
+        cell: ({ row }) => {
+          const v = row.original.dividendsAttributed;
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {v > 0.005 ? fmtCcy(v, 0) : "—"}
+            </div>
+          );
+        },
+      },
+      {
+        id: "holdingFees",
+        accessorFn: (p) => p.holdingFees,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Frais de détention" />
+        ),
+        cell: ({ row }) => {
+          const v = row.original.holdingFees;
+          return v > 0.005 ? (
+            <div className="text-right">
+              <MoneyCell value={v} dp={2} />
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-right font-mono tabular-nums">—</div>
+          );
+        },
+      },
+      {
+        id: "pnl",
+        accessorFn: (p) => {
+          const base = withDividends ? p.pnlTotal : p.pnlCapital;
+          return base - (netOfFees ? p.holdingFees : 0);
+        },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL" />,
+        cell: ({ getValue }) => (
+          <div className="text-right">
+            <MoneyCell value={getValue<number>()} signed />
+          </div>
+        ),
+      },
+      {
+        id: "pnlTotal",
+        accessorFn: (p) => p.pnlTotal - (netOfFees ? p.holdingFees : 0),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL total" />,
+        cell: ({ getValue }) => (
+          <div className="text-right">
+            <MoneyCell value={getValue<number>()} signed />
+          </div>
+        ),
+      },
+      {
+        id: "pnlPct",
+        accessorFn: (p) => {
+          const base = withDividends ? p.pnlTotal : p.pnlCapital;
+          const adj = base - (netOfFees ? p.holdingFees : 0);
+          return p.invested > 0 ? adj / p.invested : 0;
+        },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL %" />,
+        cell: ({ getValue }) => (
+          <div className="text-right">
+            <DeltaPill value={getValue<number>()} />
+          </div>
+        ),
+      },
+      {
+        id: "pnlAnnualized",
+        accessorFn: (p) => {
+          const v = netOfFees
+            ? withDividends
+              ? p.xirrTotalNetFees
+              : p.xirrCapitalNetFees
+            : withDividends
+              ? p.xirrTotal
+              : p.xirrCapital;
+          return Number.isFinite(v) ? v : Number.NaN;
+        },
+        sortingFn: (a, b, columnId) => {
+          const av = a.getValue<number>(columnId);
+          const bv = b.getValue<number>(columnId);
+          const afinite = Number.isFinite(av);
+          const bfinite = Number.isFinite(bv);
+          if (!afinite && !bfinite) return 0;
+          if (!afinite) return 1;
+          if (!bfinite) return -1;
+          return av - bv;
+        },
+        header: ({ column }) => <DataTableColumnHeader column={column} title="PnL annualisé" />,
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          return Number.isFinite(v) ? (
+            <div className="text-right">
+              <DeltaPill value={v} />
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-right font-mono text-xs">—</div>
+          );
+        },
+      },
+      {
+        id: "held",
+        accessorFn: (p) => p.yearsHeld,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Durée de détention" />
+        ),
+        cell: ({ row }) => {
+          const p = row.original;
+          return (
+            <div className="flex flex-col items-end">
+              <span className="font-mono">{p.yearsHeld.toFixed(1)} a</span>
+              <span className="text-muted-foreground text-xs">depuis {fmtDateFR(p.meanDate)}</span>
+            </div>
+          );
+        },
+      },
+    ],
+    [withDividends, netOfFees],
+  );
 
   if (positions.length === 0) {
     return <EmptyState />;
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex justify-end">
-        <ColumnsPicker
-          columns={POSITION_COLUMNS}
-          visible={visible}
-          visibleCount={visibleCount}
-          onToggle={toggle}
-          onReset={reset}
-          onShowAll={showAll}
+    <DataTable
+      columns={columns}
+      data={positions}
+      storageKey="gainvest:datatable:positions:state"
+      columnVisibility={visible}
+      initialState={{ sorting: [{ id: "valuation", desc: true }] }}
+      toolbar={(table) => (
+        <DataTableToolbar
+          table={table}
+          facetedFilters={[
+            {
+              columnId: "support",
+              title: "Support",
+              options: SUPPORTS.map((s) => ({ label: s, value: s })),
+            },
+            {
+              columnId: "type",
+              title: "Type",
+              options: [...ASSET_CLASS_FACETED_OPTIONS],
+            },
+          ]}
+          trailing={
+            <ColumnsPicker
+              columns={POSITION_COLUMNS}
+              visible={visible}
+              visibleCount={visibleCount}
+              onToggle={toggle}
+              onReset={reset}
+              onShowAll={showAll}
+            />
+          }
         />
+      )}
+      expandedRowRender={(p) => <OrdersSubrow position={p} />}
+    />
+  );
+}
+
+function OrdersSubrow({ position }: { position: Position }) {
+  return (
+    <div>
+      <div className="text-muted-foreground mb-2 text-xs">
+        Ordres contributeurs · {position.ordersCount} ({position.buyCount} achat
+        {position.buyCount > 1 ? "s" : ""}
+        {position.sellCount > 0
+          ? `, ${position.sellCount} vente${position.sellCount > 1 ? "s" : ""}`
+          : ""}
+        ) · Frais cumulés {fmtCcy(position.totalFees, 2)}
       </div>
-      <div className="border-border overflow-x-auto rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <TableHead className="w-10" />
-              <SortHead k="instrumentName" sort={sort} onSort={toggleSort}>
-                Instrument
-              </SortHead>
-              {shown("support") ? <TableHead>Support</TableHead> : null}
-              {shown("type") ? <TableHead>Type</TableHead> : null}
-              {shown("qty") ? (
-                <SortHead k="qty" sort={sort} onSort={toggleSort} num>
-                  Quantité
-                </SortHead>
-              ) : null}
-              {shown("pru") ? (
-                <SortHead k="pru" sort={sort} onSort={toggleSort} num>
-                  PRU
-                </SortHead>
-              ) : null}
-              {shown("currentPrice") ? (
-                <SortHead k="currentPrice" sort={sort} onSort={toggleSort} num>
-                  Cours actuel
-                </SortHead>
-              ) : null}
-              {shown("invested") ? (
-                <SortHead k="invested" sort={sort} onSort={toggleSort} num>
-                  Investi
-                </SortHead>
-              ) : null}
-              {shown("valuation") ? (
-                <SortHead k="valuation" sort={sort} onSort={toggleSort} num>
-                  Valorisation
-                </SortHead>
-              ) : null}
-              {shown("dividendsAttributed") ? (
-                <SortHead k="dividendsAttributed" sort={sort} onSort={toggleSort} num>
-                  Dividendes
-                </SortHead>
-              ) : null}
-              {shown("holdingFees") ? (
-                <SortHead k="holdingFees" sort={sort} onSort={toggleSort} num>
-                  Frais détention
-                </SortHead>
-              ) : null}
-              {shown("pnl") ? (
-                <SortHead k="pnl" sort={sort} onSort={toggleSort} num>
-                  PnL
-                </SortHead>
-              ) : null}
-              {shown("pnlTotal") ? (
-                <SortHead k="pnlTotal" sort={sort} onSort={toggleSort} num>
-                  PnL + div
-                </SortHead>
-              ) : null}
-              {shown("pnlPct") ? (
-                <SortHead k="pnlPct" sort={sort} onSort={toggleSort} num>
-                  PnL %
-                </SortHead>
-              ) : null}
-              {shown("pnlAnnualized") ? (
-                <SortHead k="pnlAnnualized" sort={sort} onSort={toggleSort} num>
-                  PnL / an
-                </SortHead>
-              ) : null}
-              {shown("held") ? <TableHead className="text-right">Détention</TableHead> : null}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Date</TableHead>
+            <TableHead>Type</TableHead>
+            <TableHead className="text-right">Qté</TableHead>
+            <TableHead className="text-right">Cours</TableHead>
+            <TableHead className="text-right">Montant</TableHead>
+            <TableHead className="text-right">Courtage</TableHead>
+            <TableHead>Lieu / Opérateur</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {position.orders.map((o) => (
+            <TableRow key={o.id}>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span>{fmtDateFR(o.tradeDate)}</span>
+                  {o.tradeTime ? (
+                    <span className="text-muted-foreground font-mono text-xs">{o.tradeTime}</span>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant="outline"
+                  className={
+                    o.kind === "buy"
+                      ? "border-success/30 bg-success/10 text-success"
+                      : "border-danger/30 bg-danger/10 text-danger"
+                  }
+                >
+                  {o.kind === "buy" ? "Achat" : "Vente"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums">
+                {fmtInt(o.quantity)}
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums">
+                {fmtNum(o.price, o.price < 50 ? 3 : 2)} €
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums">
+                {fmtCcy(o.quantity * o.price, 2)}
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums">
+                {fmtCcy(o.fees, 2)}
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span className="text-sm">{o.broker ?? "—"}</span>
+                  <span className="text-muted-foreground text-xs">{o.executionVenue ?? "—"}</span>
+                </div>
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sorted.map((p) => {
-              const isOpen = !!openPositions[p.key];
-              return (
-                <PositionRow
-                  key={p.key}
-                  p={p}
-                  isOpen={isOpen}
-                  onToggle={() => setOpenPositions((o) => ({ ...o, [p.key]: !o[p.key] }))}
-                  shown={shown}
-                  tableColSpan={tableColSpan}
-                  withDividends={withDividends}
-                  netOfFees={netOfFees}
-                />
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
+          ))}
+        </TableBody>
+      </Table>
     </div>
-  );
-
-  function SortHead({
-    k,
-    sort,
-    onSort,
-    num,
-    children,
-  }: {
-    k: SortKey;
-    sort: { key: SortKey; dir: "asc" | "desc" };
-    onSort: (k: SortKey) => void;
-    num?: boolean;
-    children: React.ReactNode;
-  }) {
-    const active = sort.key === k;
-    const Icon = active ? (sort.dir === "desc" ? ChevronDown : ChevronUp) : null;
-    return (
-      <TableHead
-        onClick={() => onSort(k)}
-        className={cn("cursor-pointer select-none", num ? "text-right" : undefined)}
-      >
-        <span className={cn("inline-flex items-center gap-1", num && "justify-end")}>
-          {children}
-          {Icon ? <Icon className="size-3" /> : null}
-        </span>
-      </TableHead>
-    );
-  }
-}
-
-function PositionRow({
-  p,
-  isOpen,
-  onToggle,
-  shown,
-  tableColSpan,
-  withDividends,
-  netOfFees,
-}: {
-  p: Position;
-  isOpen: boolean;
-  onToggle: () => void;
-  shown: (k: PositionColKey) => boolean;
-  tableColSpan: number;
-  withDividends: boolean;
-  netOfFees: boolean;
-}) {
-  void NUMERIC; // referenced for SortKey union — keeps the runtime constant alive for future filters.
-  const basePnl = withDividends ? p.pnlTotal : p.pnlCapital;
-  const pnlDisplay = basePnl - (netOfFees ? p.holdingFees : 0);
-  const pnlPctDisplay = p.invested > 0 ? pnlDisplay / p.invested : 0;
-  const pnlTotalDisplay = p.pnlTotal - (netOfFees ? p.holdingFees : 0);
-  const xirrDisplay = netOfFees
-    ? withDividends
-      ? p.xirrTotalNetFees
-      : p.xirrCapitalNetFees
-    : withDividends
-      ? p.xirrTotal
-      : p.xirrCapital;
-  return (
-    <>
-      <TableRow
-        onClick={onToggle}
-        className="hover:bg-muted/30 cursor-pointer"
-        data-state={isOpen ? "expanded" : undefined}
-      >
-        <TableCell>
-          <ChevronRight
-            className={cn("size-4 transition-transform", isOpen && "rotate-90")}
-            aria-hidden
-          />
-        </TableCell>
-        <TableCell>
-          <div className="flex flex-col">
-            <span className="font-medium">{p.instrumentName}</span>
-            <span className="text-muted-foreground font-mono text-xs">
-              {p.isin} · {p.currency}
-            </span>
-          </div>
-        </TableCell>
-        {shown("support") ? (
-          <TableCell>
-            <SupportTag support={p.support} />
-          </TableCell>
-        ) : null}
-        {shown("type") ? (
-          <TableCell>
-            <Badge variant="outline" className="uppercase">
-              {p.assetClass}
-            </Badge>
-          </TableCell>
-        ) : null}
-        {shown("qty") ? (
-          <TableCell className="text-right font-mono tabular-nums">{fmtInt(p.qty)}</TableCell>
-        ) : null}
-        {shown("pru") ? (
-          <TableCell className="text-right font-mono tabular-nums">
-            {fmtNum(p.pru, p.pru < 50 ? 3 : 2)} €
-          </TableCell>
-        ) : null}
-        {shown("currentPrice") ? (
-          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-            <EditablePrice isin={p.isin} value={p.currentPrice} />
-          </TableCell>
-        ) : null}
-        {shown("invested") ? (
-          <TableCell className="text-right font-mono tabular-nums">
-            {fmtCcy(p.invested, 0)}
-          </TableCell>
-        ) : null}
-        {shown("valuation") ? (
-          <TableCell className="text-right font-mono font-medium tabular-nums">
-            {fmtCcy(p.valuation, 0)}
-          </TableCell>
-        ) : null}
-        {shown("dividendsAttributed") ? (
-          <TableCell className="text-right font-mono tabular-nums">
-            {p.dividendsAttributed > 0.005 ? fmtCcy(p.dividendsAttributed, 0) : "—"}
-          </TableCell>
-        ) : null}
-        {shown("holdingFees") ? (
-          <TableCell className="text-right">
-            {p.holdingFees > 0.005 ? (
-              <MoneyCell value={p.holdingFees} dp={2} />
-            ) : (
-              <span className="text-muted-foreground font-mono tabular-nums">—</span>
-            )}
-          </TableCell>
-        ) : null}
-        {shown("pnl") ? (
-          <TableCell className="text-right">
-            <MoneyCell value={pnlDisplay} signed />
-          </TableCell>
-        ) : null}
-        {shown("pnlTotal") ? (
-          <TableCell className="text-right">
-            <MoneyCell value={pnlTotalDisplay} signed />
-          </TableCell>
-        ) : null}
-        {shown("pnlPct") ? (
-          <TableCell className="text-right">
-            <DeltaPill value={pnlPctDisplay} />
-          </TableCell>
-        ) : null}
-        {shown("pnlAnnualized") ? (
-          <TableCell className="text-right">
-            {Number.isFinite(xirrDisplay) ? (
-              <DeltaPill value={xirrDisplay} />
-            ) : (
-              <span className="text-muted-foreground font-mono text-xs">—</span>
-            )}
-          </TableCell>
-        ) : null}
-        {shown("held") ? (
-          <TableCell className="text-right">
-            <div className="flex flex-col items-end">
-              <span className="font-mono">{p.yearsHeld.toFixed(1)} a</span>
-              <span className="text-muted-foreground text-xs">depuis {fmtDateFR(p.meanDate)}</span>
-            </div>
-          </TableCell>
-        ) : null}
-      </TableRow>
-      {isOpen ? <OrdersSubrow position={p} colSpan={tableColSpan} /> : null}
-    </>
-  );
-}
-
-function OrdersSubrow({ position, colSpan }: { position: Position; colSpan: number }) {
-  return (
-    <TableRow className="bg-muted/20 hover:bg-muted/20">
-      <TableCell colSpan={colSpan} className="px-4 py-3">
-        <div className="text-muted-foreground mb-2 text-xs">
-          Ordres contributeurs · {position.ordersCount} ({position.buyCount} achat
-          {position.buyCount > 1 ? "s" : ""}
-          {position.sellCount > 0
-            ? `, ${position.sellCount} vente${position.sellCount > 1 ? "s" : ""}`
-            : ""}
-          ) · Frais cumulés {fmtCcy(position.totalFees, 2)}
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead className="text-right">Qté</TableHead>
-              <TableHead className="text-right">Cours</TableHead>
-              <TableHead className="text-right">Montant</TableHead>
-              <TableHead className="text-right">Courtage</TableHead>
-              <TableHead>Lieu / Opérateur</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {position.orders.map((o) => (
-              <TableRow key={o.id}>
-                <TableCell>
-                  <div className="flex flex-col">
-                    <span>{fmtDateFR(o.tradeDate)}</span>
-                    {o.tradeTime ? (
-                      <span className="text-muted-foreground font-mono text-xs">{o.tradeTime}</span>
-                    ) : null}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant="outline"
-                    className={
-                      o.kind === "buy"
-                        ? "border-success/30 bg-success/10 text-success"
-                        : "border-danger/30 bg-danger/10 text-danger"
-                    }
-                  >
-                    {o.kind === "buy" ? "Achat" : "Vente"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right font-mono tabular-nums">
-                  {fmtInt(o.quantity)}
-                </TableCell>
-                <TableCell className="text-right font-mono tabular-nums">
-                  {fmtNum(o.price, o.price < 50 ? 3 : 2)} €
-                </TableCell>
-                <TableCell className="text-right font-mono tabular-nums">
-                  {fmtCcy(o.quantity * o.price, 2)}
-                </TableCell>
-                <TableCell className="text-right font-mono tabular-nums">
-                  {fmtCcy(o.fees, 2)}
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-col">
-                    <span className="text-sm">{o.broker ?? "—"}</span>
-                    <span className="text-muted-foreground text-xs">{o.executionVenue ?? "—"}</span>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableCell>
-    </TableRow>
   );
 }
 

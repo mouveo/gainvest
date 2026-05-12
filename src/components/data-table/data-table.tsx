@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   flexRender,
   getCoreRowModel,
+  getExpandedRowModel,
   getFacetedRowModel,
   getFacetedUniqueValues,
   getFilteredRowModel,
@@ -12,6 +13,7 @@ import {
   useReactTable,
   type ColumnDef,
   type ColumnFiltersState,
+  type ExpandedState,
   type OnChangeFn,
   type PaginationState,
   type SortingState,
@@ -85,7 +87,7 @@ export function DataTable<TData, TValue>({
       persisted.pagination ??
       initialState?.pagination ?? { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
   );
-  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = React.useState<ExpandedState>({});
 
   React.useEffect(() => {
     writePersistedState(storageKey, { sorting, columnFilters, pagination });
@@ -98,12 +100,15 @@ export function DataTable<TData, TValue>({
       sorting,
       columnFilters,
       pagination,
+      expanded,
       ...(columnVisibility !== undefined ? { columnVisibility } : null),
     },
     enableSortingRemoval: true,
+    enableExpanding: Boolean(expandedRowRender),
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onPaginationChange: setPagination,
+    onExpandedChange: setExpanded,
     onColumnVisibilityChange,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -111,6 +116,7 @@ export function DataTable<TData, TValue>({
     getPaginationRowModel: getPaginationRowModel(),
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getFacetedUniqueValues(),
+    getExpandedRowModel: getExpandedRowModel(),
     filterFns: {
       multiSelect: multiSelectFilterFn,
       dateRange: dateRangeFilterFn,
@@ -150,19 +156,13 @@ export function DataTable<TData, TValue>({
               </TableRow>
             ) : (
               rows.map((row) => {
-                const isExpanded = expandedRowRender ? expanded[row.id] === true : false;
+                const isExpanded = expandedRowRender ? row.getIsExpanded() : false;
                 return (
                   <React.Fragment key={row.id}>
                     <TableRow
                       aria-expanded={expandedRowRender ? isExpanded : undefined}
                       onClick={
-                        expandedRowRender
-                          ? () =>
-                              setExpanded((prev) => ({
-                                ...prev,
-                                [row.id]: !prev[row.id],
-                              }))
-                          : undefined
+                        expandedRowRender ? () => row.toggleExpanded() : undefined
                       }
                       className={expandedRowRender ? "cursor-pointer" : undefined}
                     >

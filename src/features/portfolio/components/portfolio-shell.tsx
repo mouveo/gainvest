@@ -11,18 +11,19 @@ import { AutoRefreshPrices } from "./auto-refresh-prices";
 import { HoldingFeesToggle, useNetOfFeesMode } from "./holding-fees-toggle";
 import { ImportSheet } from "./import-sheet";
 import { KpiStrip } from "./kpi-strip";
-import { OrdersTable } from "./orders-table";
+import { MovementsTable } from "./movements-table";
 import { PnlModeToggle, usePnlMode } from "./pnl-mode-toggle";
 import { PositionsTable } from "./positions-table";
 import { RealizationsTable } from "./realizations-table";
 import { RefreshPricesButton } from "./refresh-prices-button";
 
-type Tab = "positions" | "realizations" | "orders";
+type Tab = "positions" | "realizations" | "movements";
 
 type Props = {
   positions: Position[];
   orders: OrderRow[];
   realizations: PastRealization[];
+  priceByIsin: Record<string, number>;
   totals: PortfolioTotals;
   pricesUpdatedAt: string | null;
 };
@@ -31,6 +32,7 @@ export function PortfolioShell({
   positions,
   orders,
   realizations,
+  priceByIsin,
   totals,
   pricesUpdatedAt,
 }: Props) {
@@ -46,7 +48,7 @@ export function PortfolioShell({
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">Portefeuille</h1>
           <p className="text-muted-foreground text-sm">
-            Une vue agrégée par instrument et le journal complet des ordres.
+            Une vue agrégée par instrument et le journal complet des mouvements.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -82,8 +84,8 @@ export function PortfolioShell({
               {realizations.length}
             </span>
           </TabsTrigger>
-          <TabsTrigger value="orders">
-            Ordres
+          <TabsTrigger value="movements">
+            Mouvements
             <span className="bg-background/60 text-muted-foreground ml-1.5 rounded-full px-1.5 py-0.5 text-xs">
               {orders.length}
             </span>
@@ -97,10 +99,14 @@ export function PortfolioShell({
           />
         </TabsContent>
         <TabsContent value="realizations" className="pt-4">
-          <RealizationsTable realizations={realizations} withDividends={withDividends} />
+          <RealizationsTable
+            realizations={realizations}
+            withDividends={withDividends}
+            priceByIsin={priceByIsin}
+          />
         </TabsContent>
-        <TabsContent value="orders" className="pt-4">
-          <OrdersTable orders={orders} />
+        <TabsContent value="movements" className="pt-4">
+          <MovementsTable orders={orders} />
         </TabsContent>
       </Tabs>
     </div>
