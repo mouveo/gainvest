@@ -523,6 +523,96 @@ describe("aggregate", () => {
     expect(positions.find((p) => p.isin === "FR0010315770")).toBeDefined();
   });
 
+  it("computeTotals counts cash in valuation + lines but excludes it from invested/pnl/xirr", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 5000,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+        tradeDate: "2024-05-12",
+      }),
+      makeOrder({
+        id: "b1",
+        isin: "FR0000000001",
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+        broker: "Bourse Direct",
+      }),
+    ];
+
+    const today = new Date("2026-05-12T00:00:00Z");
+    const positions = aggregate(orders, { FR0000000001: 110 }, today);
+    const totals = computeTotals(positions, today);
+
+    // 2 lines: 1 instrument + 1 cash.
+    expect(totals.lines).toBe(2);
+    // Valuation: 1100 (instrument) + 4000 (cash 5000 - 1000) = 5100.
+    expect(totals.valuation).toBeCloseTo(5100, 6);
+    // Invested counts only the instrument capital.
+    expect(totals.invested).toBeCloseTo(1000, 6);
+    // PnL is anchored on instrument valuation, not cash.
+    expect(totals.pnl).toBeCloseTo(100, 6);
+    expect(totals.pnlPct).toBeCloseTo(0.1, 6);
+    // XIRR derived from instrument flows only.
+    expect(Number.isFinite(totals.xirrCapital)).toBe(true);
+  });
+
+  it("computeTotals dividendsTotal excludes cash interest", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 5000,
+        quantity: null,
+        price: null,
+        broker: "Bourse Direct",
+        tradeDate: "2024-05-12",
+      }),
+      makeOrder({
+        id: "b1",
+        isin: "FR0000000001",
+        kind: "buy",
+        tradeDate: "2024-05-12",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+        broker: "Bourse Direct",
+      }),
+      makeOrder({
+        id: "d1",
+        isin: "FR0000000001",
+        kind: "dividend",
+        tradeDate: "2024-11-12",
+        quantity: null,
+        price: null,
+        grossAmount: 20,
+        broker: "Bourse Direct",
+      }),
+      makeOrder({
+        id: "int",
+        isin: "",
+        kind: "interest",
+        tradeDate: "2024-12-01",
+        quantity: null,
+        price: null,
+        grossAmount: 12,
+        broker: "Bourse Direct",
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0000000001: 110 });
+    const totals = computeTotals(positions);
+
+    // dividendsTotal = instrument dividend only (20), not cash interest (12).
+    expect(totals.dividendsTotal).toBeCloseTo(20, 6);
+  });
+
   it("exposes Position.holdingFees and a portfolio holding-fees total with a depressed net XIRR", () => {
     const orders: OrderRow[] = [
       makeOrder({

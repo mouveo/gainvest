@@ -637,7 +637,9 @@ export function replayTransactions(
       currentPrice: fxToEur,
       valuation: valuationEur,
       totalCost: valuationEur,
-      dividendsAttributed: 0,
+      // For cash lines we surface the interest received in the "Dividendes"
+      // column — the two are conceptually the same passive income.
+      dividendsAttributed: state.interestReceivedEur,
       totalFees: state.feesPaidEur,
       pnlCapital: 0,
       pnlTotal: pnlTotalCash,

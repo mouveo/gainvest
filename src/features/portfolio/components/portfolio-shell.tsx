@@ -43,7 +43,11 @@ export function PortfolioShell({
   const [tab, setTab] = useState<Tab>("positions");
   const [withDividends, setWithDividends] = usePnlMode();
   const [netOfFees, setNetOfFees] = useNetOfFeesMode();
-  const knownIsins = positions.map((p) => ({ isin: p.isin, name: p.instrumentName }));
+  // Cash positions carry synthetic CASH-* pseudo-ISINs — they have no place
+  // in the order autocomplete (you don't "buy" cash from the order sheet).
+  const knownIsins = positions
+    .filter((p) => p.assetClass !== "cash")
+    .map((p) => ({ isin: p.isin, name: p.instrumentName }));
 
   const [visiblePositions, setVisiblePositions] = useState(positions);
   const [visibleRealizations, setVisibleRealizations] = useState(realizations);

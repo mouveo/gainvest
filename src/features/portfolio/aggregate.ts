@@ -336,6 +336,9 @@ export function computeMovementTotals(orders: OrderRow[]): MovementTotals {
 }
 
 export function computeTotals(positions: Position[], today: Date = new Date()): PortfolioTotals {
+  // Cash positions count toward total valuation and the line count, but they
+  // never feed performance KPIs — a deposit is not a P&L event, so it must
+  // not dilute % returns, XIRR, or "invested capital".
   let invested = 0;
   let valuation = 0;
   let totalFees = 0;
@@ -348,8 +351,10 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
   const cfTotalNetFees: Flow[] = [];
 
   for (const p of positions) {
-    invested += p.invested;
     valuation += p.valuation;
+    if (p.assetClass === "cash") continue;
+
+    invested += p.invested;
     totalFees += p.totalFees;
     dividendsTotal += p.dividendsAttributed;
     holdingFeesTotal += p.holdingFees;
@@ -364,8 +369,16 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     }
   }
 
-  const pnl = valuation - invested;
-  const pnlTotal = valuation + dividendsTotal - invested;
+  // P&L derived from instrument lines only (valuation here = sum of instrument
+  // valuations, computed by subtracting cash valuation). Keeps % returns
+  // anchored on invested capital, not on opening cash deposits.
+  const cashValuation = positions
+    .filter((p) => p.assetClass === "cash")
+    .reduce((s, p) => s + p.valuation, 0);
+  const instrumentValuation = valuation - cashValuation;
+
+  const pnl = instrumentValuation - invested;
+  const pnlTotal = instrumentValuation + dividendsTotal - invested;
   const pnlPct = invested > 0 ? pnl / invested : 0;
   const pnlPctTotal = invested > 0 ? pnlTotal / invested : 0;
   const meanDateMs = invested > 0 ? weightedDateMs / invested : today.getTime();
