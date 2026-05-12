@@ -230,6 +230,54 @@ describe("aggregate", () => {
     expect(totals.pnlAnnualized).toBeCloseTo(totals.xirrCapital, 6);
   });
 
+  it("propagates Position.broker from the order rows", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "a",
+        isin: "FR0010315770",
+        broker: "Bourse Direct",
+        quantity: 5,
+        price: 100,
+        grossAmount: 500,
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0010315770: 120 });
+    expect(positions).toHaveLength(1);
+    expect(positions[0]!.broker).toBe("Bourse Direct");
+  });
+
+  it("splits same (isin, support) into separate positions when brokers differ", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "a",
+        isin: "FR0010315770",
+        support: "CTO",
+        broker: "Bourse Direct",
+        quantity: 5,
+        price: 100,
+        grossAmount: 500,
+      }),
+      makeOrder({
+        id: "b",
+        isin: "FR0010315770",
+        support: "CTO",
+        broker: "IBKR",
+        quantity: 7,
+        price: 110,
+        grossAmount: 770,
+      }),
+    ];
+
+    const positions = aggregate(orders, { FR0010315770: 120 });
+    expect(positions).toHaveLength(2);
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    expect(bd.qty).toBe(5);
+    expect(ibkr.qty).toBe(7);
+    expect(bd.key).not.toBe(ibkr.key);
+  });
+
   it("exposes Position.holdingFees and a portfolio holding-fees total with a depressed net XIRR", () => {
     const orders: OrderRow[] = [
       makeOrder({

@@ -18,6 +18,7 @@ export type ActivePosition = {
   preferredMic: string | null;
   preferredCurrency: string | null;
   support: Support;
+  broker: string | null;
   instrumentName: string;
   assetClass: string;
   currency: string;
@@ -60,6 +61,7 @@ export type PastRealization = {
   key: string;
   isin: string;
   support: Support;
+  broker: string | null;
   instrumentName: string;
   assetClass: string;
   currency: string;
@@ -133,6 +135,7 @@ type LineState = {
   preferredMic: string | null;
   preferredCurrency: string | null;
   support: Support;
+  broker: string | null;
   instrumentName: string;
   assetClass: string;
   currency: string;
@@ -155,8 +158,8 @@ type LineState = {
   realizations: PastRealization[];
 };
 
-function lineKey(isin: string, support: Support): string {
-  return `${isin}\x01${support}`;
+function lineKey(isin: string, support: Support, broker: string | null): string {
+  return `${isin}\x01${support}\x01${broker ?? ""}`;
 }
 
 export function replayTransactions(
@@ -168,7 +171,8 @@ export function replayTransactions(
   const lines = new Map<string, LineState>();
 
   function ensureLine(o: OrderRow): LineState {
-    const key = lineKey(o.isin, o.support);
+    const broker = o.broker ?? null;
+    const key = lineKey(o.isin, o.support, broker);
     let line = lines.get(key);
     if (!line) {
       line = {
@@ -178,6 +182,7 @@ export function replayTransactions(
         preferredMic: o.preferredMic,
         preferredCurrency: o.preferredCurrency,
         support: o.support,
+        broker,
         instrumentName: o.instrumentName,
         assetClass: o.assetClass,
         currency: o.currency,
@@ -232,15 +237,38 @@ export function replayTransactions(
 
     if (o.kind === "dividend") {
       if (o.grossAmount <= 0) continue;
-      const line = ensureLine(o);
-      if (line.qty > 0) line.divPerShareCumul += o.grossAmount / line.qty;
-      line.activeDividendFlows.push({ date: o.tradeDate, amount: o.grossAmount });
+      const orderBroker = o.broker ?? null;
+      if (orderBroker !== null) {
+        const line = lines.get(lineKey(o.isin, o.support, orderBroker));
+        if (!line || line.qty <= 0) continue;
+        line.divPerShareCumul += o.grossAmount / line.qty;
+        line.activeDividendFlows.push({ date: o.tradeDate, amount: o.grossAmount });
+        continue;
+      }
+      // Legacy dividend with no broker: split across existing lines with the
+      // same (isin, support) and qty > 0, prorata of qty. Never create a new
+      // line for an orphan dividend.
+      const candidates: LineState[] = [];
+      let totalQty = 0;
+      for (const candidate of lines.values()) {
+        if (candidate.isin !== o.isin) continue;
+        if (candidate.support !== o.support) continue;
+        if (candidate.qty <= 0) continue;
+        candidates.push(candidate);
+        totalQty += candidate.qty;
+      }
+      if (candidates.length === 0 || totalQty <= 0) continue;
+      for (const candidate of candidates) {
+        const share = (candidate.qty / totalQty) * o.grossAmount;
+        candidate.divPerShareCumul += share / candidate.qty;
+        candidate.activeDividendFlows.push({ date: o.tradeDate, amount: share });
+      }
       continue;
     }
 
     if (o.kind === "sell") {
       if (o.quantity == null || o.quantity <= 0 || o.price == null) continue;
-      const line = lines.get(lineKey(o.isin, o.support));
+      const line = lines.get(lineKey(o.isin, o.support, o.broker ?? null));
       if (!line || line.qty <= 0) continue;
 
       const qtyBefore = line.qty;
@@ -289,6 +317,7 @@ export function replayTransactions(
         key: line.key,
         isin: line.isin,
         support: line.support,
+        broker: line.broker,
         instrumentName: line.instrumentName,
         assetClass: line.assetClass,
         currency: line.currency,
@@ -334,12 +363,14 @@ export function replayTransactions(
       const totalFee = o.grossAmount;
       if (totalFee <= 0) continue;
 
+      const feeBroker = o.broker ?? null;
       const eligible: LineState[] = [];
       let totalInvested = 0;
       for (const candidate of lines.values()) {
         if (candidate.qty <= 0) continue;
         if (!isForeignIsin(candidate.isin)) continue;
         if (candidate.totalCost <= 0) continue;
+        if (feeBroker !== null && candidate.broker !== feeBroker) continue;
         eligible.push(candidate);
         totalInvested += candidate.totalCost;
       }
@@ -411,6 +442,7 @@ export function replayTransactions(
       preferredMic: line.preferredMic,
       preferredCurrency: line.preferredCurrency,
       support: line.support,
+      broker: line.broker,
       instrumentName: line.instrumentName,
       assetClass: line.assetClass,
       currency: line.currency,

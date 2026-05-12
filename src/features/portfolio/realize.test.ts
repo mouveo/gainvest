@@ -548,6 +548,268 @@ describe("replayTransactions", () => {
     expect(positions[0]!.holdingFeesAttributed).toBeCloseTo(0, 8);
   });
 
+  it("splits same ISIN+support into separate positions when brokers differ", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 100,
+        price: 150,
+        grossAmount: 15_000,
+      }),
+      makeOrder({
+        id: "b-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 50,
+        price: 180,
+        grossAmount: 9_000,
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0378331005: 200 }, TODAY);
+
+    expect(positions).toHaveLength(2);
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    expect(bd.qty).toBe(100);
+    expect(bd.pru).toBeCloseTo(150, 8);
+    expect(ibkr.qty).toBe(50);
+    expect(ibkr.pru).toBeCloseTo(180, 8);
+  });
+
+  it("attributes a broker-tagged dividend only to the matching broker line", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 100,
+        price: 150,
+        grossAmount: 15_000,
+      }),
+      makeOrder({
+        id: "b-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 50,
+        price: 180,
+        grossAmount: 9_000,
+      }),
+      makeOrder({
+        id: "d-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "dividend",
+        tradeDate: "2024-06-01",
+        quantity: null,
+        price: null,
+        grossAmount: 30,
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0378331005: 200 }, TODAY);
+
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    expect(bd.dividendsAttributed).toBeCloseTo(0, 8);
+    expect(ibkr.dividendsAttributed).toBeCloseTo(30, 8);
+  });
+
+  it("splits a broker=null dividend prorata of qty across same (isin, support) lines", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 100,
+        price: 150,
+        grossAmount: 15_000,
+      }),
+      makeOrder({
+        id: "b-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 50,
+        price: 180,
+        grossAmount: 9_000,
+      }),
+      makeOrder({
+        id: "d-legacy",
+        isin: "US0378331005",
+        broker: null,
+        kind: "dividend",
+        tradeDate: "2024-06-01",
+        quantity: null,
+        price: null,
+        grossAmount: 150,
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0378331005: 200 }, TODAY);
+
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    // 100 / 150 * 150 = 100; 50 / 150 * 150 = 50
+    expect(bd.dividendsAttributed).toBeCloseTo(100, 8);
+    expect(ibkr.dividendsAttributed).toBeCloseTo(50, 8);
+  });
+
+  it("a broker-tagged sell consumes only its broker line", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 100,
+        price: 150,
+        grossAmount: 15_000,
+      }),
+      makeOrder({
+        id: "b-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 50,
+        price: 180,
+        grossAmount: 9_000,
+      }),
+      makeOrder({
+        id: "s-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "sell",
+        tradeDate: "2025-01-01",
+        quantity: 30,
+        price: 200,
+        grossAmount: 6_000,
+      }),
+    ];
+
+    const { positions, realizations } = replayTransactions(
+      orders,
+      { US0378331005: 220 },
+      TODAY,
+    );
+
+    expect(realizations).toHaveLength(1);
+    expect(realizations[0]!.broker).toBe("Bourse Direct");
+    expect(realizations[0]!.saleQty).toBe(30);
+
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    expect(bd.qty).toBe(70);
+    expect(ibkr.qty).toBe(50);
+    expect(ibkr.pru).toBeCloseTo(180, 8);
+  });
+
+  it("attributes a broker-tagged holding fee only to foreign positions of the same broker", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-us-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1_000,
+      }),
+      makeOrder({
+        id: "b-us-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1_000,
+      }),
+      makeOrder({
+        id: "f-ibkr",
+        isin: "",
+        broker: "IBKR",
+        kind: "fee",
+        tradeDate: "2024-06-30",
+        quantity: null,
+        price: null,
+        grossAmount: 25,
+        notes: "Droits de garde 2024 S1",
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0378331005: 110 }, TODAY);
+
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    expect(bd.holdingFeesAttributed).toBeCloseTo(0, 8);
+    expect(ibkr.holdingFeesAttributed).toBeCloseTo(25, 8);
+  });
+
+  it("a broker=null holding fee still spreads across every foreign active line, all brokers", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "b-us-bd",
+        isin: "US0378331005",
+        broker: "Bourse Direct",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1_000,
+      }),
+      makeOrder({
+        id: "b-us-ibkr",
+        isin: "US0378331005",
+        broker: "IBKR",
+        kind: "buy",
+        tradeDate: "2024-01-01",
+        quantity: 10,
+        price: 300,
+        grossAmount: 3_000,
+      }),
+      makeOrder({
+        id: "f-legacy",
+        isin: "",
+        broker: null,
+        kind: "fee",
+        tradeDate: "2024-06-30",
+        quantity: null,
+        price: null,
+        grossAmount: 40,
+        notes: "Droits de garde 2024 S1",
+        instrumentName: "Droits de garde",
+        assetClass: "cash",
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { US0378331005: 110 }, TODAY);
+
+    const bd = positions.find((p) => p.broker === "Bourse Direct")!;
+    const ibkr = positions.find((p) => p.broker === "IBKR")!;
+    // Prorata totalCost: 1000 vs 3000 → 10€ / 30€
+    expect(bd.holdingFeesAttributed).toBeCloseTo(10, 8);
+    expect(ibkr.holdingFeesAttributed).toBeCloseTo(30, 8);
+  });
+
   it("emits a dated negative cash-flow for attributed holding fees and derives a lower net XIRR", () => {
     const orders: OrderRow[] = [
       makeOrder({

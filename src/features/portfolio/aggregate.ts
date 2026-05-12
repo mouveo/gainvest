@@ -49,6 +49,7 @@ export type Position = {
   preferredMic: string | null;
   preferredCurrency: string | null;
   support: Support;
+  broker: string | null;
   instrumentName: string;
   assetClass: string;
   currency: string;
@@ -104,6 +105,7 @@ function activeToPosition(p: ActivePosition): Position {
     preferredMic: p.preferredMic,
     preferredCurrency: p.preferredCurrency,
     support: p.support,
+    broker: p.broker,
     instrumentName: p.instrumentName,
     assetClass: p.assetClass,
     currency: p.currency,
