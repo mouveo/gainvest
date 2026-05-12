@@ -70,28 +70,34 @@ export function DataTable<TData, TValue>({
   pageSizeOptions,
   className,
 }: DataTableProps<TData, TValue>) {
-  const initialFromStorageRef = React.useRef<ReturnType<typeof readPersistedState>>(null);
-  if (initialFromStorageRef.current === null) {
-    initialFromStorageRef.current = readPersistedState(storageKey) ?? {};
-  }
-  const persisted = initialFromStorageRef.current;
-
-  const [sorting, setSorting] = React.useState<SortingState>(
-    () => persisted.sorting ?? initialState?.sorting ?? [],
-  );
+  // SSR-safe: initialize with the props/defaults so the first server-rendered
+  // HTML matches the first client render. Persisted state from localStorage
+  // is only applied AFTER hydration via an effect — this avoids the
+  // "Hydration failed: server vs client mismatch" on attributes like
+  // aria-sort that depend on the initial sorting state.
+  const [sorting, setSorting] = React.useState<SortingState>(initialState?.sorting ?? []);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
-    () => persisted.columnFilters ?? initialState?.columnFilters ?? [],
+    initialState?.columnFilters ?? [],
   );
   const [pagination, setPagination] = React.useState<PaginationState>(
-    () =>
-      persisted.pagination ??
-      initialState?.pagination ?? { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
+    initialState?.pagination ?? { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
   );
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
+  const [hydrated, setHydrated] = React.useState(false);
 
   React.useEffect(() => {
+    const persisted = readPersistedState(storageKey) ?? {};
+    if (persisted.sorting) setSorting(persisted.sorting);
+    if (persisted.columnFilters) setColumnFilters(persisted.columnFilters);
+    if (persisted.pagination) setPagination(persisted.pagination);
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  React.useEffect(() => {
+    if (!hydrated) return;
     writePersistedState(storageKey, { sorting, columnFilters, pagination });
-  }, [storageKey, sorting, columnFilters, pagination]);
+  }, [hydrated, storageKey, sorting, columnFilters, pagination]);
 
   const table = useReactTable({
     data,
