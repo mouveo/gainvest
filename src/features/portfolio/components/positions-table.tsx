@@ -74,6 +74,10 @@ const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "held", label: "Durée de détention", num: true, defaultVisible: true },
 ];
 
+const DashCell = (
+  <div className="text-muted-foreground text-right font-mono tabular-nums">—</div>
+);
+
 function migratePositionsVisibilityKey(): void {
   if (typeof window === "undefined") return;
   try {
@@ -137,6 +141,7 @@ export function PositionsTable({
         header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
         cell: ({ row }) => {
           const p = row.original;
+          const isCash = p.assetClass === "cash";
           return (
             <div className="flex items-center gap-2">
               <ChevronRight
@@ -144,6 +149,7 @@ export function PositionsTable({
                 className={cn(
                   "text-muted-foreground size-4 shrink-0 transition-transform",
                   row.getIsExpanded() && "rotate-90",
+                  isCash && "invisible",
                 )}
               />
               <div className="flex flex-col">
@@ -188,9 +194,17 @@ export function PositionsTable({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Quantité" align="right" />
         ),
-        cell: ({ row }) => (
-          <div className="text-right font-mono tabular-nums">{fmtInt(row.original.qty)}</div>
-        ),
+        cell: ({ row }) => {
+          const p = row.original;
+          if (p.assetClass === "cash") {
+            return (
+              <div className="text-right font-mono tabular-nums">
+                {fmtNum(p.qty, 2)} {p.currency}
+              </div>
+            );
+          }
+          return <div className="text-right font-mono tabular-nums">{fmtInt(p.qty)}</div>;
+        },
       },
       {
         id: "pru",
@@ -198,11 +212,15 @@ export function PositionsTable({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="PRU" align="right" />
         ),
-        cell: ({ row }) => (
-          <div className="text-right font-mono tabular-nums">
-            {fmtNum(row.original.pru, row.original.pru < 50 ? 3 : 2)} €
-          </div>
-        ),
+        cell: ({ row }) => {
+          const p = row.original;
+          if (p.assetClass === "cash") return DashCell;
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {fmtNum(p.pru, p.pru < 50 ? 3 : 2)} €
+            </div>
+          );
+        },
       },
       {
         id: "pruGross",
@@ -210,11 +228,15 @@ export function PositionsTable({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="PRU brut" align="right" />
         ),
-        cell: ({ row }) => (
-          <div className="text-muted-foreground text-right font-mono tabular-nums">
-            {fmtCcy(row.original.pruGross, row.original.pruGross < 50 ? 3 : 2)}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const p = row.original;
+          if (p.assetClass === "cash") return DashCell;
+          return (
+            <div className="text-muted-foreground text-right font-mono tabular-nums">
+              {fmtCcy(p.pruGross, p.pruGross < 50 ? 3 : 2)}
+            </div>
+          );
+        },
       },
       {
         id: "currentPrice",
@@ -222,11 +244,15 @@ export function PositionsTable({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Cours actuel" align="right" />
         ),
-        cell: ({ row }) => (
-          <div className="text-right" onClick={(e) => e.stopPropagation()}>
-            <EditablePrice isin={row.original.isin} value={row.original.currentPrice} />
-          </div>
-        ),
+        cell: ({ row }) => {
+          const p = row.original;
+          if (p.assetClass === "cash") return DashCell;
+          return (
+            <div className="text-right" onClick={(e) => e.stopPropagation()}>
+              <EditablePrice isin={p.isin} value={p.currentPrice} />
+            </div>
+          );
+        },
       },
       {
         id: "listing",
@@ -307,6 +333,7 @@ export function PositionsTable({
       {
         id: "pnl",
         accessorFn: (p) => {
+          if (p.assetClass === "cash") return p.pnlTotal;
           const base = withDividends ? p.pnlTotal : p.pnlCapital;
           return base - (netOfFees ? p.holdingFees : 0);
         },
@@ -334,6 +361,7 @@ export function PositionsTable({
       {
         id: "pnlPct",
         accessorFn: (p) => {
+          if (p.assetClass === "cash") return Number.NaN;
           const base = withDividends ? p.pnlTotal : p.pnlCapital;
           const adj = base - (netOfFees ? p.holdingFees : 0);
           return p.invested > 0 ? adj / p.invested : 0;
@@ -341,11 +369,15 @@ export function PositionsTable({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="PnL %" align="right" />
         ),
-        cell: ({ getValue }) => (
-          <div className="text-right">
-            <DeltaPill value={getValue<number>()} />
-          </div>
-        ),
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          if (!Number.isFinite(v)) return DashCell;
+          return (
+            <div className="text-right">
+              <DeltaPill value={v} />
+            </div>
+          );
+        },
       },
       {
         id: "pnlAnnualized",
@@ -391,6 +423,7 @@ export function PositionsTable({
         ),
         cell: ({ row }) => {
           const p = row.original;
+          if (p.assetClass === "cash") return DashCell;
           return (
             <div className="flex flex-col items-end">
               <span className="font-mono">{p.yearsHeld.toFixed(1)} a</span>
@@ -454,6 +487,13 @@ export function PositionsTable({
 }
 
 function OrdersSubrow({ position }: { position: Position }) {
+  if (position.assetClass === "cash" || position.orders.length === 0) {
+    return (
+      <div className="text-muted-foreground text-xs">
+        Ligne agrégée — aucun ordre contributeur à afficher.
+      </div>
+    );
+  }
   return (
     <div>
       <div className="text-muted-foreground mb-2 text-xs">

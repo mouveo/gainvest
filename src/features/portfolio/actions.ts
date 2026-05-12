@@ -17,9 +17,34 @@ const PRICE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type AddOrderResult = { ok: true } | { ok: false; error: string };
 
+const ADD_ORDER_KINDS = ["buy", "sell", "deposit", "withdrawal", "interest", "fee"] as const;
+type AddOrderKind = (typeof ADD_ORDER_KINDS)[number];
+
+const INITIAL_CASH_NOTE = "Solde initial — saisie manuelle";
+
+async function resolveFxRate(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  currency: string,
+): Promise<{ ok: true; rate: number } | { ok: false; error: string }> {
+  if (currency === "EUR") return { ok: true, rate: 1 };
+  const { data, error } = await supabase
+    .from("fx_rates")
+    .select("eur_rate")
+    .eq("currency", currency)
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.eur_rate == null) {
+    return {
+      ok: false,
+      error: `Devise ${currency} non disponible — aucun taux FX en cache. Utilise EUR ou rafraîchis les cours pour télécharger le taux.`,
+    };
+  }
+  return { ok: true, rate: Number(data.eur_rate) };
+}
+
 /**
- * Create (or reuse) an instrument by ISIN, then insert a buy/sell transaction
- * on the user's default account.
+ * Create (or reuse) an instrument by ISIN for buy/sell rows, or insert a
+ * cash flow (deposit/withdrawal/interest/fee) without an instrument.
  */
 export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const isin = String(formData.get("isin") ?? "")
@@ -27,7 +52,10 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
     .toUpperCase();
   const name = String(formData.get("name") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "buy");
-  const kind = kindRaw === "sell" ? "sell" : "buy";
+  if (!ADD_ORDER_KINDS.includes(kindRaw as AddOrderKind)) {
+    return { ok: false, error: "Type de mouvement invalide." };
+  }
+  const kind = kindRaw as AddOrderKind;
   const assetClass = String(formData.get("asset_class") ?? "etf");
   const currency = String(formData.get("currency") ?? "EUR").toUpperCase();
 
@@ -39,6 +67,7 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const tradeTime = String(formData.get("trade_time") ?? "") || null;
   const executionVenue = String(formData.get("execution_venue") ?? "").trim() || null;
   const broker = String(formData.get("broker") ?? "").trim() || null;
+  const notes = String(formData.get("notes") ?? "").trim() || null;
 
   const supportRaw = String(formData.get("support") ?? "CTO");
 
@@ -47,12 +76,19 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   }
 
   const support = supportRaw as Support;
+  const isCashKind = kind !== "buy" && kind !== "sell";
 
-  if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
-  if (!name) return { ok: false, error: "Le nom de l'instrument est requis." };
-  if (quantity <= 0) return { ok: false, error: "La quantité doit être > 0." };
-  if (price <= 0) return { ok: false, error: "Le cours doit être > 0." };
   if (!tradeDate) return { ok: false, error: "La date d'exécution est requise." };
+
+  if (!isCashKind) {
+    if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
+    if (!name) return { ok: false, error: "Le nom de l'instrument est requis." };
+    if (quantity <= 0) return { ok: false, error: "La quantité doit être > 0." };
+    if (price <= 0) return { ok: false, error: "Le cours doit être > 0." };
+  } else {
+    if (!broker) return { ok: false, error: "Opérateur requis pour un mouvement cash." };
+    if (grossAmount <= 0) return { ok: false, error: "Le montant doit être > 0." };
+  }
 
   const supabase = await createClient();
   const {
@@ -60,39 +96,50 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
+  // Cash kinds in non-EUR currencies require a known FX rate so the replay
+  // can project the flow back to EUR.
+  const fxLookup = await resolveFxRate(supabase, currency);
+  if (!fxLookup.ok) return { ok: false, error: fxLookup.error };
+  const fxRate = fxLookup.rate;
+
   const accountId = await getDefaultAccountId();
 
-  // Upsert instrument by ISIN (MIC kept null in V0 — single venue per ISIN).
-  const { data: instrument, error: instErr } = await supabase
-    .from("instruments")
-    .upsert(
-      {
-        isin,
-        symbol: isin,
-        name,
-        asset_class: assetClass,
-        currency,
-      },
-      { onConflict: "symbol,mic" },
-    )
-    .select("id")
-    .single();
+  let instrumentId: string | null = null;
+  if (!isCashKind) {
+    const { data: instrument, error: instErr } = await supabase
+      .from("instruments")
+      .upsert(
+        {
+          isin,
+          symbol: isin,
+          name,
+          asset_class: assetClass,
+          currency,
+        },
+        { onConflict: "symbol,mic" },
+      )
+      .select("id")
+      .single();
 
-  if (instErr) return { ok: false, error: instErr.message };
+    if (instErr) return { ok: false, error: instErr.message };
+    instrumentId = instrument.id;
+  }
 
   const { error: insertErr } = await supabase.from("transactions").insert({
     user_id: user.id,
     account_id: accountId,
-    instrument_id: instrument.id,
+    instrument_id: instrumentId,
     kind,
     trade_date: tradeDate,
-    trade_time: tradeTime,
-    quantity,
-    price,
+    trade_time: isCashKind ? null : tradeTime,
+    quantity: isCashKind ? null : quantity,
+    price: isCashKind ? null : price,
     gross_amount: grossAmount,
-    fees,
+    fees: isCashKind ? 0 : fees,
     currency,
-    execution_venue: executionVenue,
+    fx_rate: fxRate,
+    notes,
+    execution_venue: isCashKind ? null : executionVenue,
     broker,
     support,
   });
@@ -101,6 +148,148 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
 
   revalidatePath("/portfolio");
   return { ok: true };
+}
+
+export type SetCashBalanceResult =
+  | { ok: true; gap: number; action: "noop" | "updated" | "inserted" }
+  | { ok: false; error: string };
+
+const CASH_KIND_SIGN: Record<string, 1 | -1> = {
+  deposit: 1,
+  sell: 1,
+  dividend: 1,
+  interest: 1,
+  withdrawal: -1,
+  buy: -1,
+  fee: -1,
+  tax: -1,
+};
+
+function shiftDate(d: string, days: number): string {
+  const dt = new Date(`${d}T00:00:00Z`);
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Calibrate the cash balance for a (support, broker, currency) bucket at a
+ * given date by replaying every transaction that hits cash and either
+ * adjusting the existing manual "Solde initial" deposit, or inserting one
+ * dated just before the first observed flow.
+ */
+export async function setCashBalance(input: {
+  support: Support;
+  broker: string;
+  currency: string;
+  amount: number;
+  atDate: string;
+}): Promise<SetCashBalanceResult> {
+  const support = input.support;
+  const broker = input.broker.trim();
+  const currency = input.currency.trim().toUpperCase();
+  const amount = Number(input.amount);
+  const atDate = input.atDate;
+
+  if (!SUPPORTS.includes(support)) return { ok: false, error: "Support invalide." };
+  if (!broker) return { ok: false, error: "Opérateur requis." };
+  if (!currency) return { ok: false, error: "Devise requise." };
+  if (!Number.isFinite(amount)) return { ok: false, error: "Montant invalide." };
+  if (!atDate) return { ok: false, error: "Date de calibration requise." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Non authentifié." };
+
+  const fxLookup = await resolveFxRate(supabase, currency);
+  if (!fxLookup.ok) return { ok: false, error: fxLookup.error };
+  const fxRate = fxLookup.rate;
+
+  // Replay every cash-impacting transaction up to atDate, in native currency,
+  // for the targeted bucket. Mirrors the logic in realize.ts.
+  const { data: rows, error: txErr } = await supabase
+    .from("transactions")
+    .select("id, kind, gross_amount, fees, trade_date, notes")
+    .eq("user_id", user.id)
+    .eq("support", support)
+    .eq("broker", broker)
+    .eq("currency", currency)
+    .lte("trade_date", atDate);
+  if (txErr) return { ok: false, error: txErr.message };
+
+  let balance = 0;
+  let firstDate: string | null = null;
+  let initialRow: { id: string; gross_amount: number } | null = null;
+  for (const r of rows ?? []) {
+    const sign = CASH_KIND_SIGN[r.kind];
+    if (!sign) continue;
+    const gross = Number(r.gross_amount ?? 0);
+    const fees = Number(r.fees ?? 0);
+    if (r.kind === "buy") balance -= gross + fees;
+    else if (r.kind === "sell") balance += gross - fees;
+    else balance += sign * gross;
+    if (firstDate === null || r.trade_date < firstDate) firstDate = r.trade_date;
+    if (r.kind === "deposit" && r.notes === INITIAL_CASH_NOTE) {
+      initialRow = { id: r.id, gross_amount: gross };
+    }
+  }
+
+  const gap = amount - balance;
+  if (Math.abs(gap) < 0.01) return { ok: true, gap: 0, action: "noop" };
+
+  if (initialRow) {
+    const next = initialRow.gross_amount + gap;
+    if (next <= 0) {
+      return {
+        ok: false,
+        error: "Le solde calibré rendrait la transaction initiale négative ou nulle.",
+      };
+    }
+    const { error: updErr } = await supabase
+      .from("transactions")
+      .update({ gross_amount: next })
+      .eq("id", initialRow.id);
+    if (updErr) return { ok: false, error: updErr.message };
+    revalidatePath("/portfolio");
+    return { ok: true, gap, action: "updated" };
+  }
+
+  if (gap <= 0) {
+    return {
+      ok: false,
+      error:
+        "Aucune transaction initiale à ajuster — calibrage descendant nécessite un dépôt préalable.",
+    };
+  }
+
+  // Insert a deposit dated one day before the earliest flow (or atDate when
+  // the bucket has no other flows yet).
+  const anchorDate = firstDate ?? atDate;
+  const initialDate = shiftDate(anchorDate < atDate ? anchorDate : atDate, -1);
+
+  const accountId = await getDefaultAccountId();
+
+  const { error: insErr } = await supabase.from("transactions").insert({
+    user_id: user.id,
+    account_id: accountId,
+    instrument_id: null,
+    kind: "deposit",
+    trade_date: initialDate,
+    quantity: null,
+    price: null,
+    gross_amount: gap,
+    fees: 0,
+    currency,
+    fx_rate: fxRate,
+    notes: INITIAL_CASH_NOTE,
+    broker,
+    support,
+  });
+  if (insErr) return { ok: false, error: insErr.message };
+
+  revalidatePath("/portfolio");
+  return { ok: true, gap, action: "inserted" };
 }
 
 export async function deleteOrder(id: string): Promise<void> {

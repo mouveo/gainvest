@@ -71,8 +71,6 @@ export function parseIbkrFlexXml(
     const price = Math.abs(num(t.tradePrice));
     const grossNative = Math.abs(num(t.proceeds));
     const feesNative = Math.abs(num(t.ibCommission));
-    const grossEur = grossNative * fx;
-    const feesEur = feesNative * fx;
     const symbol = str(t.symbol);
     const description = str(t.description) || symbol;
 
@@ -83,15 +81,17 @@ export function parseIbkrFlexXml(
       isin,
       description,
       quantity,
-      totalAmount: grossEur + feesEur,
-      grossAmount: grossEur,
+      // totalAmount stays in native currency; fxRate ferries the EUR projection.
+      totalAmount: grossNative + feesNative,
+      grossAmount: grossNative,
       price,
       needsAttention: false,
       externalId: str(t.ibExecID) || str(t.transactionID) || null,
       symbol,
       name: description,
-      currency: "EUR",
-      fees: feesEur,
+      currency: nativeCurrency,
+      fees: feesNative,
+      fxRate: fx,
       broker: "Interactive Brokers",
     });
   }
@@ -109,10 +109,13 @@ export function parseIbkrFlexXml(
 
     const nativeCurrency = str(c.currency) || "EUR";
     const fx = num(c.fxRateToBase) || 1;
-    const grossEur = Math.abs(amount) * fx;
+    const grossNative = Math.abs(amount);
     const isin = str(c.isin);
     const symbol = str(c.symbol) || null;
     const description = str(c.description) || rawType;
+    // Keep the IBKR raw type in `notes` so we can audit
+    // "Broker Interest Received" vs "Bond Interest Paid" downstream.
+    const notes = rawType ? `${rawType}${description ? ` — ${description}` : ""}` : description;
 
     rows.push({
       rawLine: lineNo++,
@@ -121,18 +124,18 @@ export function parseIbkrFlexXml(
       isin: isin || null,
       description,
       quantity: null,
-      totalAmount: grossEur,
-      grossAmount: grossEur,
+      totalAmount: grossNative,
+      grossAmount: grossNative,
       needsAttention: false,
       externalId: str(c.transactionID) || null,
       symbol,
       name: description,
-      currency: "EUR",
+      currency: nativeCurrency,
       fees: 0,
+      fxRate: fx,
       broker: "Interactive Brokers",
+      notes,
     });
-
-    void nativeCurrency;
   }
 
   return rows;

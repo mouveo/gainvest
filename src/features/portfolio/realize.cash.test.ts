@@ -1,0 +1,250 @@
+import { describe, expect, it } from "vitest";
+
+import type { OrderRow } from "./aggregate";
+import { replayTransactions } from "./realize";
+
+function makeOrder(overrides: Partial<OrderRow>): OrderRow {
+  return {
+    id: "x",
+    isin: "",
+    instrumentId: null,
+    preferredMic: null,
+    preferredCurrency: null,
+    instrumentName: "Cash",
+    assetClass: "cash",
+    currency: "EUR",
+    kind: "deposit",
+    tradeDate: "2025-01-01",
+    tradeTime: null,
+    quantity: null,
+    price: null,
+    grossAmount: 0,
+    fees: 0,
+    fxRate: 1,
+    notes: null,
+    executionVenue: null,
+    broker: "Bourse Direct",
+    support: "CTO",
+    ...overrides,
+  };
+}
+
+const TODAY = new Date("2026-05-12T00:00:00Z");
+
+describe("replayTransactions — cash replay", () => {
+  it("replays an EUR cash flow chain to 8055.20", () => {
+    // 10000 (dep) - 4000 (buy) + 2000 (sell) + 50 (div) + 12 (int) - 5 (fee) - 1.80 (tax) = 8055.20
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 10000,
+        tradeDate: "2025-01-01",
+      }),
+      makeOrder({
+        id: "buy",
+        kind: "buy",
+        isin: "FR0010315770",
+        instrumentName: "ETF Test",
+        assetClass: "etf",
+        quantity: 40,
+        price: 100,
+        grossAmount: 4000,
+        tradeDate: "2025-02-01",
+      }),
+      makeOrder({
+        id: "sell",
+        kind: "sell",
+        isin: "FR0010315770",
+        instrumentName: "ETF Test",
+        assetClass: "etf",
+        quantity: 20,
+        price: 100,
+        grossAmount: 2000,
+        tradeDate: "2025-03-01",
+      }),
+      makeOrder({
+        id: "div",
+        kind: "dividend",
+        isin: "FR0010315770",
+        instrumentName: "ETF Test",
+        assetClass: "etf",
+        grossAmount: 50,
+        tradeDate: "2025-04-01",
+      }),
+      makeOrder({
+        id: "int",
+        kind: "interest",
+        isin: "",
+        grossAmount: 12,
+        tradeDate: "2025-05-01",
+      }),
+      makeOrder({
+        id: "fee",
+        kind: "fee",
+        isin: "",
+        grossAmount: 5,
+        tradeDate: "2025-06-01",
+        notes: "Frais virement",
+      }),
+      makeOrder({
+        id: "tax",
+        kind: "tax",
+        isin: "",
+        grossAmount: 1.8,
+        tradeDate: "2025-07-01",
+      }),
+    ];
+
+    const { positions } = replayTransactions(
+      orders,
+      { FR0010315770: 100 },
+      TODAY,
+    );
+
+    const cash = positions.find((p) => p.assetClass === "cash");
+    expect(cash).toBeDefined();
+    expect(cash!.qty).toBeCloseTo(8055.2, 6);
+    expect(cash!.currency).toBe("EUR");
+    expect(cash!.support).toBe("CTO");
+    expect(cash!.broker).toBe("Bourse Direct");
+    expect(cash!.isin).toBe("CASH-EUR-BOURSEDIRECT");
+    // pnlTotal cash = interest(12) - fees(5) - tax(1.8) = 5.2
+    expect(cash!.pnlTotal).toBeCloseTo(5.2, 6);
+    expect(cash!.pnlCapital).toBe(0);
+    // XIRR cash → NaN
+    expect(Number.isNaN(cash!.xirrCapital)).toBe(true);
+    expect(Number.isNaN(cash!.xirrTotal)).toBe(true);
+  });
+
+  it("emits one cash position per (broker, currency) on a multi-currency import", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep-eur",
+        kind: "deposit",
+        currency: "EUR",
+        fxRate: 1,
+        grossAmount: 5000,
+        broker: "Interactive Brokers",
+        tradeDate: "2025-01-01",
+      }),
+      makeOrder({
+        id: "dep-usd",
+        kind: "deposit",
+        currency: "USD",
+        fxRate: 0.92,
+        grossAmount: 10000,
+        broker: "Interactive Brokers",
+        tradeDate: "2025-01-02",
+      }),
+      makeOrder({
+        id: "buy-usd",
+        kind: "buy",
+        isin: "US0231351067",
+        instrumentName: "AMZN",
+        assetClass: "equity",
+        currency: "USD",
+        fxRate: 0.92,
+        quantity: 10,
+        price: 200,
+        grossAmount: 2000,
+        broker: "Interactive Brokers",
+        tradeDate: "2025-02-01",
+      }),
+    ];
+
+    const fxByCurrency = { EUR: 1, USD: 0.95 };
+    const { positions } = replayTransactions(
+      orders,
+      { US0231351067: 220 },
+      TODAY,
+      fxByCurrency,
+    );
+
+    const cashLines = positions.filter((p) => p.assetClass === "cash");
+    expect(cashLines).toHaveLength(2);
+
+    const eur = cashLines.find((p) => p.currency === "EUR")!;
+    const usd = cashLines.find((p) => p.currency === "USD")!;
+
+    expect(eur.qty).toBeCloseTo(5000, 6);
+    expect(eur.currentPrice).toBe(1);
+    expect(eur.valuation).toBeCloseTo(5000, 6);
+
+    // USD: 10000 deposit - 2000 buy = 8000 USD. Valuation in EUR = 8000 * 0.95
+    expect(usd.qty).toBeCloseTo(8000, 6);
+    expect(usd.currentPrice).toBe(0.95);
+    expect(usd.valuation).toBeCloseTo(7600, 6);
+    expect(usd.isin).toBe("CASH-USD-INTERACTIVEBROKERS");
+  });
+
+  it("interest with ISIN feeds the instrument and bumps cash without a duplicate cash KPI", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "dep",
+        kind: "deposit",
+        grossAmount: 5000,
+        tradeDate: "2024-01-01",
+      }),
+      makeOrder({
+        id: "buy",
+        kind: "buy",
+        isin: "US912828YV68",
+        instrumentName: "US Treasury 2027",
+        assetClass: "bond",
+        quantity: 50,
+        price: 100,
+        grossAmount: 5000,
+        tradeDate: "2024-02-01",
+      }),
+      makeOrder({
+        id: "int",
+        kind: "interest",
+        isin: "US912828YV68",
+        instrumentName: "US Treasury 2027",
+        assetClass: "bond",
+        grossAmount: 75,
+        tradeDate: "2024-08-01",
+      }),
+    ];
+
+    const { positions } = replayTransactions(
+      orders,
+      { US912828YV68: 102 },
+      TODAY,
+    );
+
+    const cash = positions.find((p) => p.assetClass === "cash")!;
+    const bond = positions.find((p) => p.isin === "US912828YV68")!;
+
+    // Cash bumps by 75 (interest received), but cash interest KPI stays 0
+    // because the interest was attributed to the bond instrument.
+    expect(cash.qty).toBeCloseTo(75, 6); // 5000 - 5000 + 75
+    expect(cash.pnlTotal).toBeCloseTo(0, 6);
+
+    // The bond receives the 75 as a dividend-equivalent flow.
+    expect(bond.dividendsAttributed).toBeCloseTo(75, 6);
+  });
+
+  it("does not emit a cash position when no deposit/withdrawal happened", () => {
+    const orders: OrderRow[] = [
+      makeOrder({
+        id: "buy",
+        kind: "buy",
+        isin: "FR0010315770",
+        instrumentName: "ETF",
+        assetClass: "etf",
+        quantity: 10,
+        price: 100,
+        grossAmount: 1000,
+        broker: null,
+        tradeDate: "2025-01-01",
+      }),
+    ];
+
+    const { positions } = replayTransactions(orders, { FR0010315770: 110 }, TODAY);
+    const cashLines = positions.filter((p) => p.assetClass === "cash");
+    expect(cashLines).toHaveLength(0);
+    expect(positions).toHaveLength(1);
+  });
+});

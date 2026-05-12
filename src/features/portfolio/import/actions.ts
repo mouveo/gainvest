@@ -269,6 +269,7 @@ export async function importBrokerOrders(
     fees: number;
     tax: number;
     currency: string;
+    fx_rate: number;
     notes: string | null;
     broker: string;
     support: Support;
@@ -280,13 +281,15 @@ export async function importBrokerOrders(
 
   for (const row of valid) {
     let instrumentId: string | null = null;
-    let instrumentCurrency = "EUR";
+    let instrumentCurrency: string | null = null;
 
     if (row.isin) {
       const inst = byIsin.get(row.isin);
       if (!inst) {
-        // For cash-only rows (deposit/withdrawal/interest/tax) ISIN is optional;
-        // skip the OpenFIGI miss only when the row really needs an instrument.
+        // For buy/sell/dividend the instrument is required.
+        // For cash-only rows (deposit/withdrawal/interest/tax/fee) ISIN is
+        // optional: when the lookup fails we still import the cash flow with
+        // a warning so the cash balance stays correct.
         if (row.kind === "buy" || row.kind === "sell" || row.kind === "dividend") {
           failed.push({
             row: row.rawLine,
@@ -294,6 +297,9 @@ export async function importBrokerOrders(
           });
           continue;
         }
+        warnings.push(
+          `Ligne ${row.rawLine} : ISIN ${row.isin} non résolu — importé en flux cash sans instrument`,
+        );
       } else {
         instrumentId = inst.id;
         instrumentCurrency = inst.currency;
@@ -322,8 +328,10 @@ export async function importBrokerOrders(
       existingExternalIds.add(row.externalId);
     }
 
-    const currency = row.currency ?? (row.kind === "fee" ? "EUR" : instrumentCurrency);
+    // Preserve the row's native currency (don't force EUR for IBKR multi-ccy).
+    const currency = row.currency ?? instrumentCurrency ?? "EUR";
     const notes = row.notes ?? (row.kind === "fee" ? row.description : null);
+    const fxRate = row.fxRate ?? 1;
 
     toInsert.push({
       user_id: user.id,
@@ -337,6 +345,7 @@ export async function importBrokerOrders(
       fees,
       tax,
       currency,
+      fx_rate: fxRate,
       notes,
       broker: row.broker ?? brokerProfile.name,
       support,
