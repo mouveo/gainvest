@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { pickPreferredListing, quoteProvider } from "@/lib/quotes";
+import { type Listing, pickPreferredListing, quoteProvider } from "@/lib/quotes";
 import { findListingForPreference, shouldRejectDivergentQuote } from "@/lib/quotes/ranking";
 import { createClient } from "@/lib/supabase/server";
 
@@ -135,6 +135,73 @@ export async function deleteTransactionsByBroker(
 
   revalidatePath("/portfolio");
   return { deleted: data?.length ?? 0 };
+}
+
+export async function fetchAvailableListings(isin: string): Promise<Listing[]> {
+  const cleaned = isin.trim().toUpperCase();
+  if (!cleaned) return [];
+  // Authentication required to avoid leaking provider quota to anonymous callers.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const listings = await quoteProvider.searchListings(cleaned);
+  // Sort by the same ranking used for auto-pick so the preferred candidate
+  // surfaces first in the UI list.
+  const preferred = pickPreferredListing(listings);
+  if (!preferred) return listings;
+  const head = listings.find((l) => l.providerSymbol === preferred.providerSymbol);
+  if (!head) return listings;
+  return [head, ...listings.filter((l) => l.providerSymbol !== preferred.providerSymbol)];
+}
+
+export type SetInstrumentListingResult = { ok: true } | { ok: false; error: string };
+
+export async function setInstrumentListing(
+  instrumentId: string,
+  mic: string,
+  currency: string,
+): Promise<SetInstrumentListingResult> {
+  const cleanedMic = mic.trim().toUpperCase();
+  const cleanedCcy = currency.trim().toUpperCase();
+  if (!instrumentId) return { ok: false, error: "Instrument inconnu." };
+  if (!cleanedMic) return { ok: false, error: "MIC requis." };
+  if (!cleanedCcy) return { ok: false, error: "Devise requise." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Non authentifié." };
+
+  // RLS filters to the caller's rows; we double-check ownership here so the
+  // server action refuses cleanly when the instrument isn't held.
+  const { data: txn, error: txnErr } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("instrument_id", instrumentId)
+    .limit(1)
+    .maybeSingle();
+  if (txnErr) return { ok: false, error: txnErr.message };
+  if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
+
+  const { error: updErr } = await supabase
+    .from("instruments")
+    .update({
+      preferred_mic: cleanedMic,
+      preferred_currency: cleanedCcy,
+      currency: cleanedCcy,
+      provider: null,
+      provider_symbol: null,
+    })
+    .eq("id", instrumentId);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  revalidatePath("/portfolio");
+  return { ok: true };
 }
 
 export async function updateInstrumentPrice(isin: string, price: number): Promise<void> {

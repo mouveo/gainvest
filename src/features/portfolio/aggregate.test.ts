@@ -6,6 +6,9 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
   return {
     id: "x",
     isin: "FR0000000001",
+    instrumentId: null,
+    preferredMic: null,
+    preferredCurrency: null,
     instrumentName: "Test",
     assetClass: "etf",
     currency: "EUR",

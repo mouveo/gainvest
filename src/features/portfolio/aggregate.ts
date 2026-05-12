@@ -16,6 +16,9 @@ import { xirr, type Flow } from "./xirr";
 export type OrderRow = {
   id: string;
   isin: string;
+  instrumentId: string | null;
+  preferredMic: string | null;
+  preferredCurrency: string | null;
   // For dividend/fee rows without an instrument, this can carry the description
   // ("Droits de garde 2022 T3" etc.) — see queries.ts.
   instrumentName: string;
@@ -42,6 +45,9 @@ export type TradableOrder = OrderRow & { quantity: number; price: number };
 export type Position = {
   key: string;
   isin: string;
+  instrumentId: string | null;
+  preferredMic: string | null;
+  preferredCurrency: string | null;
   support: Support;
   instrumentName: string;
   assetClass: string;
@@ -94,6 +100,9 @@ function activeToPosition(p: ActivePosition): Position {
   return {
     key: p.key,
     isin: p.isin,
+    instrumentId: p.instrumentId,
+    preferredMic: p.preferredMic,
+    preferredCurrency: p.preferredCurrency,
     support: p.support,
     instrumentName: p.instrumentName,
     assetClass: p.assetClass,

@@ -14,6 +14,9 @@ import { xirr, type Flow } from "./xirr";
 export type ActivePosition = {
   key: string;
   isin: string;
+  instrumentId: string | null;
+  preferredMic: string | null;
+  preferredCurrency: string | null;
   support: Support;
   instrumentName: string;
   assetClass: string;
@@ -126,6 +129,9 @@ function toISODate(d: Date): string {
 type LineState = {
   key: string;
   isin: string;
+  instrumentId: string | null;
+  preferredMic: string | null;
+  preferredCurrency: string | null;
   support: Support;
   instrumentName: string;
   assetClass: string;
@@ -168,6 +174,9 @@ export function replayTransactions(
       line = {
         key,
         isin: o.isin,
+        instrumentId: o.instrumentId,
+        preferredMic: o.preferredMic,
+        preferredCurrency: o.preferredCurrency,
         support: o.support,
         instrumentName: o.instrumentName,
         assetClass: o.assetClass,
@@ -398,6 +407,9 @@ export function replayTransactions(
     positions.push({
       key: line.key,
       isin: line.isin,
+      instrumentId: line.instrumentId,
+      preferredMic: line.preferredMic,
+      preferredCurrency: line.preferredCurrency,
       support: line.support,
       instrumentName: line.instrumentName,
       assetClass: line.assetClass,
