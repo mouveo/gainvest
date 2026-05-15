@@ -6,6 +6,7 @@ import { getActiveAccount } from "@/features/accounts/active";
 import { listAccounts } from "@/features/accounts/queries";
 import { createClient } from "@/lib/supabase/server";
 
+import { AppNav } from "./app-nav";
 import { LogoutButton } from "./logout-button";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -29,20 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/portfolio" className="text-sm font-medium tracking-tight">
               Gainvest
             </Link>
-            <nav className="flex items-center gap-4 text-sm">
-              <Link
-                href="/portfolio"
-                className="text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Portefeuille
-              </Link>
-              <Link
-                href="/settings/accounts"
-                className="text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Comptes
-              </Link>
-            </nav>
+            <AppNav />
           </div>
           <div className="flex items-center gap-3">
             <AccountSwitcher accounts={accounts} currentId={activeAccount} />
