@@ -16,6 +16,7 @@ export type ActivePosition = {
   key: string;
   isin: string;
   instrumentId: string | null;
+  instrumentSymbol: string | null;
   preferredMic: string | null;
   preferredCurrency: string | null;
   support: Support;
@@ -79,6 +80,7 @@ export type ActivePosition = {
 export type PastRealization = {
   key: string;
   isin: string;
+  instrumentSymbol: string | null;
   support: Support;
   broker: string | null;
   instrumentName: string;
@@ -166,8 +168,12 @@ function toISODate(d: Date): string {
 
 type LineState = {
   key: string;
+  // Cached logical identity (instrumentId > isin > symbol > name) so dividend
+  // and fee dispatch don't have to re-derive it on every iteration.
+  ident: string;
   isin: string;
   instrumentId: string | null;
+  instrumentSymbol: string | null;
   preferredMic: string | null;
   preferredCurrency: string | null;
   support: Support;
@@ -201,8 +207,22 @@ type LineState = {
   bondCouponFrequency: 1 | 2 | 4 | null;
 };
 
-function lineKey(isin: string, support: Support, broker: string | null): string {
-  return `${isin}\x01${support}\x01${broker ?? ""}`;
+// Logical identity for a transaction line — instrumentId is the most stable
+// (UUID, survives renames), with isin / symbol / name as ordered fallbacks.
+// Crypto orders have no ISIN; cash rows have no instrumentId; instrumentSymbol
+// covers the legacy "ISIN-less but referenced by ticker" path.
+export function orderLineIdent(
+  o: Pick<OrderRow, "instrumentId" | "isin" | "instrumentSymbol" | "instrumentName">,
+): string {
+  return o.instrumentId || o.isin || o.instrumentSymbol || o.instrumentName;
+}
+
+function lineKey(ident: string, support: Support, broker: string | null): string {
+  return `${ident}\x01${support}\x01${broker ?? ""}`;
+}
+
+export function orderLineKey(o: OrderRow): string {
+  return lineKey(orderLineIdent(o), o.support, o.broker ?? null);
 }
 
 type CashState = {
@@ -278,13 +298,16 @@ export function replayTransactions(
 
   function ensureLine(o: OrderRow): LineState {
     const broker = o.broker ?? null;
-    const key = lineKey(o.isin, o.support, broker);
+    const ident = orderLineIdent(o);
+    const key = lineKey(ident, o.support, broker);
     let line = lines.get(key);
     if (!line) {
       line = {
         key,
+        ident,
         isin: o.isin,
         instrumentId: o.instrumentId,
+        instrumentSymbol: o.instrumentSymbol,
         preferredMic: o.preferredMic,
         preferredCurrency: o.preferredCurrency,
         support: o.support,
@@ -369,37 +392,42 @@ export function replayTransactions(
       applyCash(o, o.grossAmount);
       const cashState = ensureCash(o);
 
-      // Interest WITHOUT ISIN: pure cash event, accumulate the cash KPI and
-      // do NOT attribute to any instrument. Excluded from externalFlows so
-      // it surfaces as organic cash yield via the residual balance.
-      if (o.kind === "interest" && !o.isin) {
+      // Interest WITHOUT an attributable instrument (no ISIN, no symbol, no
+      // instrumentId): pure cash event, accumulate the cash KPI and do NOT
+      // attribute to any line. Excluded from externalFlows so it surfaces as
+      // organic cash yield via the residual balance.
+      const interestIdent = orderLineIdent(o);
+      const hasAttributableInstrument =
+        !!o.instrumentId || !!o.isin || !!o.instrumentSymbol;
+      if (o.kind === "interest" && !hasAttributableInstrument) {
         cashState.interestReceivedEur += grossEurVal;
         continue;
       }
-      // Dividend/interest WITH ISIN: money lands on the instrument; from
-      // cash's viewpoint it's equivalent to an external deposit.
+      // Dividend/interest WITH an attributable instrument: money lands on the
+      // instrument; from cash's viewpoint it's equivalent to an external
+      // deposit.
       cashState.externalFlows.push({
         date: o.tradeDate,
         amount: -grossEurVal,
       });
-      // Dividend or interest WITH ISIN: attribute to the matching instrument
-      // line(s). For interest with ISIN we explicitly do NOT increment the
-      // cash KPI to avoid double-counting (cash received once, instrument
-      // income once — same flow).
+      // Attribute to the matching instrument line(s). For interest WITH an
+      // instrument we explicitly do NOT increment the cash KPI to avoid
+      // double-counting (cash received once, instrument income once — same
+      // flow).
       if (orderBroker !== null) {
-        const line = lines.get(lineKey(o.isin, o.support, orderBroker));
+        const line = lines.get(lineKey(interestIdent, o.support, orderBroker));
         if (!line || line.qty <= 0) continue;
         line.divPerShareCumul += grossEurVal / line.qty;
         line.activeDividendFlows.push({ date: o.tradeDate, amount: grossEurVal });
         continue;
       }
       // Legacy dividend/interest with no broker: split across existing lines
-      // with the same (isin, support) and qty > 0, prorata of qty. Never
-      // create a new line for an orphan flow.
+      // with the same logical identity + support and qty > 0, prorata of qty.
+      // Never create a new line for an orphan flow.
       const candidates: LineState[] = [];
       let totalQty = 0;
       for (const candidate of lines.values()) {
-        if (candidate.isin !== o.isin) continue;
+        if (candidate.ident !== interestIdent) continue;
         if (candidate.support !== o.support) continue;
         if (candidate.qty <= 0) continue;
         candidates.push(candidate);
@@ -453,7 +481,7 @@ export function replayTransactions(
         amount: -(grossAmountEur(o) - feesEur(o)),
       });
 
-      const line = lines.get(lineKey(o.isin, o.support, o.broker ?? null));
+      const line = lines.get(lineKey(orderLineIdent(o), o.support, o.broker ?? null));
       if (!line || line.qty <= 0) continue;
 
       const qtyBefore = line.qty;
@@ -503,6 +531,7 @@ export function replayTransactions(
       const realization: PastRealization = {
         key: line.key,
         isin: line.isin,
+        instrumentSymbol: line.instrumentSymbol,
         support: line.support,
         broker: line.broker,
         instrumentName: line.instrumentName,
@@ -594,7 +623,12 @@ export function replayTransactions(
     if (line.firstBuyDate === null) continue;
     if (line.qty <= 0) continue;
 
-    const price = priceByIsin[line.isin];
+    // Price lookup prefers the canonical instrumentId; fall back to ISIN so
+    // existing callers (and tests) that pass an ISIN-keyed map keep working.
+    const price =
+      (line.instrumentId ? priceByIsin[line.instrumentId] : undefined) ??
+      (line.isin ? priceByIsin[line.isin] : undefined) ??
+      (line.instrumentSymbol ? priceByIsin[line.instrumentSymbol] : undefined);
     const pru = line.totalCost / line.qty;
     const invested = line.qty * pru;
     const pruGross = line.totalCostGross / line.qty;
@@ -649,6 +683,7 @@ export function replayTransactions(
       key: line.key,
       isin: line.isin,
       instrumentId: line.instrumentId,
+      instrumentSymbol: line.instrumentSymbol,
       preferredMic: line.preferredMic,
       preferredCurrency: line.preferredCurrency,
       support: line.support,
@@ -723,6 +758,7 @@ export function replayTransactions(
       key: state.key,
       isin: cashIsin(state.currency, state.broker),
       instrumentId: null,
+      instrumentSymbol: null,
       preferredMic: null,
       preferredCurrency: state.currency,
       support: state.support,

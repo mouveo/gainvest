@@ -8,6 +8,8 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     id: "x",
     isin: "US023135CV68",
     instrumentId: null,
+    instrumentSymbol: null,
+    convertPairId: null,
     preferredMic: null,
     preferredCurrency: "USD",
     instrumentName: "AMZN 4.5 2030",

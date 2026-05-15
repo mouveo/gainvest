@@ -20,6 +20,8 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     id: "x",
     isin: "FR0000000001",
     instrumentId: null,
+    instrumentSymbol: null,
+    convertPairId: null,
     preferredMic: null,
     preferredCurrency: null,
     instrumentName: "Test",
@@ -48,6 +50,7 @@ function makeRealization(overrides: Partial<PastRealization>): PastRealization {
   return {
     key: "FR0000000001\x01CTO\x01",
     isin: "FR0000000001",
+    instrumentSymbol: null,
     support: "CTO",
     broker: null,
     instrumentName: "Test",

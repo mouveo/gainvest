@@ -12,6 +12,8 @@ function makeOrder(overrides: Partial<OrderRow>): OrderRow {
     id: "x",
     isin: "FR0010315770",
     instrumentId: null,
+    instrumentSymbol: null,
+    convertPairId: null,
     preferredMic: null,
     preferredCurrency: null,
     instrumentName: "Test",

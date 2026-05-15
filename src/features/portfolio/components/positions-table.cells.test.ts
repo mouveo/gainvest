@@ -17,6 +17,7 @@ function pos(overrides: Partial<Position> = {}): Position {
     key: "k",
     isin: "FR0010315770",
     instrumentId: null,
+    instrumentSymbol: null,
     preferredMic: null,
     preferredCurrency: null,
     support: "CTO",

@@ -30,6 +30,9 @@ export type OrderRow = {
   id: string;
   isin: string;
   instrumentId: string | null;
+  // instruments.symbol — required for ISIN-less assets (crypto) to keep the
+  // line identity stable across renames. Null on cash rows / pre-LOT4 data.
+  instrumentSymbol: string | null;
   preferredMic: string | null;
   preferredCurrency: string | null;
   // For dividend/fee rows without an instrument, this can carry the description
@@ -37,6 +40,8 @@ export type OrderRow = {
   instrumentName: string;
   // "cash" is used as a fallback for cash flows without an instrument.
   assetClass: string;
+  // Coinbase Convert legs share the same id. Null for every other row.
+  convertPairId: string | null;
   // Native currency of grossAmount/fees/price. Use fxRate to project to EUR.
   currency: string;
   kind: OrderKind;
@@ -98,6 +103,7 @@ export type Position = {
   key: string;
   isin: string;
   instrumentId: string | null;
+  instrumentSymbol: string | null;
   preferredMic: string | null;
   preferredCurrency: string | null;
   support: Support;
@@ -169,6 +175,7 @@ function activeToPosition(p: ActivePosition): Position {
     key: p.key,
     isin: p.isin,
     instrumentId: p.instrumentId,
+    instrumentSymbol: p.instrumentSymbol,
     preferredMic: p.preferredMic,
     preferredCurrency: p.preferredCurrency,
     support: p.support,
