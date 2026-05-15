@@ -17,9 +17,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-full flex-1 flex-col">
       <header className="border-border border-b">
         <div className="mx-auto flex w-full items-center justify-between px-6 py-3">
-          <Link href="/portfolio" className="text-sm font-medium tracking-tight">
-            Gainvest
-          </Link>
+          <div className="flex items-center gap-6">
+            <Link href="/portfolio" className="text-sm font-medium tracking-tight">
+              Gainvest
+            </Link>
+            <nav className="flex items-center gap-4 text-sm">
+              <Link
+                href="/portfolio"
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Portefeuille
+              </Link>
+              <Link
+                href="/settings/accounts"
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Comptes
+              </Link>
+            </nav>
+          </div>
           <LogoutButton email={user.email} />
         </div>
       </header>
