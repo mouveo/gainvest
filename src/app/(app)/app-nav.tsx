@@ -11,11 +11,6 @@ const ITEMS: { href: string; label: string; match: (path: string) => boolean }[]
     label: "Portefeuille",
     match: (p) => p === "/portfolio" || p.startsWith("/portfolio/"),
   },
-  {
-    href: "/settings/accounts",
-    label: "Comptes",
-    match: (p) => p.startsWith("/settings/accounts"),
-  },
 ];
 
 export function AppNav() {
