@@ -59,7 +59,6 @@ export function AccountsManager({ accounts }: Props) {
             <TableRow>
               <TableHead>Nom</TableHead>
               <TableHead>Type</TableHead>
-              <TableHead>Opérateur</TableHead>
               <TableHead>Devise</TableHead>
               <TableHead className="text-right">Transactions</TableHead>
               <TableHead className="w-32 text-right">Actions</TableHead>
@@ -68,7 +67,7 @@ export function AccountsManager({ accounts }: Props) {
           <TableBody>
             {accounts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground text-center text-sm">
+                <TableCell colSpan={5} className="text-muted-foreground text-center text-sm">
                   Aucun compte pour l&apos;instant.
                 </TableCell>
               </TableRow>
@@ -91,7 +90,6 @@ export function AccountsManager({ accounts }: Props) {
 function NewAccountForm() {
   const [name, setName] = useState("");
   const [type, setType] = useState<AccountType>("cto");
-  const [broker, setBroker] = useState("");
   const [currency, setCurrency] = useState("EUR");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -100,13 +98,12 @@ function NewAccountForm() {
     event.preventDefault();
     setError(null);
     startTransition(async () => {
-      const result = await createAccount({ name, type, broker, currency });
+      const result = await createAccount({ name, type, currency });
       if (!result.ok) {
         setError(result.error);
         return;
       }
       setName("");
-      setBroker("");
       setType("cto");
       setCurrency("EUR");
     });
@@ -118,7 +115,7 @@ function NewAccountForm() {
       className="bg-muted/30 flex flex-col gap-3 rounded-lg border p-4"
     >
       <h2 className="text-sm font-semibold tracking-tight">Nouveau compte</h2>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="new-account-name">Nom</Label>
           <Input
@@ -143,15 +140,6 @@ function NewAccountForm() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="new-account-broker">Opérateur</Label>
-          <Input
-            id="new-account-broker"
-            value={broker}
-            onChange={(e) => setBroker(e.target.value)}
-            placeholder="Bourse Direct"
-          />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="new-account-currency">Devise</Label>
@@ -189,7 +177,6 @@ type AccountRowProps = {
 function AccountRow({ account, isLastAccount }: AccountRowProps) {
   const [name, setName] = useState(account.name);
   const [type, setType] = useState<AccountType>(account.type as AccountType);
-  const [broker, setBroker] = useState(account.broker ?? "");
   const [currency, setCurrency] = useState(account.currency);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -197,7 +184,6 @@ function AccountRow({ account, isLastAccount }: AccountRowProps) {
   const dirty =
     name !== account.name ||
     type !== (account.type as AccountType) ||
-    (broker || "") !== (account.broker ?? "") ||
     currency !== account.currency;
 
   const hasTransactions = account.transaction_count > 0;
@@ -219,7 +205,7 @@ function AccountRow({ account, isLastAccount }: AccountRowProps) {
   const saveAll = () => {
     setError(null);
     startTransition(async () => {
-      const result = await updateAccount(account.id, { name, type, broker, currency });
+      const result = await updateAccount(account.id, { name, type, currency });
       if (!result.ok) setError(result.error);
     });
   };
@@ -264,14 +250,6 @@ function AccountRow({ account, isLastAccount }: AccountRowProps) {
         </TableCell>
         <TableCell>
           <Input
-            value={broker}
-            onChange={(e) => setBroker(e.target.value)}
-            placeholder="—"
-            className="h-8"
-          />
-        </TableCell>
-        <TableCell>
-          <Input
             value={currency}
             onChange={(e) => setCurrency(e.target.value.toUpperCase())}
             maxLength={3}
@@ -302,7 +280,7 @@ function AccountRow({ account, isLastAccount }: AccountRowProps) {
       </TableRow>
       {error ? (
         <TableRow>
-          <TableCell colSpan={6} className="text-danger text-xs">
+          <TableCell colSpan={5} className="text-danger text-xs">
             {error}
           </TableCell>
         </TableRow>

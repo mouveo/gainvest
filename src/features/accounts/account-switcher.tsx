@@ -76,8 +76,7 @@ export function AccountSwitcher({ accounts, currentId }: Props) {
               <span className="flex flex-col">
                 <span className="text-sm">{account.name}</span>
                 <span className="text-muted-foreground text-xs">
-                  {account.type.toUpperCase()} · {account.broker ?? "manuel"} ·{" "}
-                  {account.currency}
+                  {account.type.toUpperCase()} · {account.currency}
                 </span>
               </span>
             </SelectItem>

@@ -11,19 +11,16 @@ export type AccountActionResult = { ok: true } | { ok: false; error: string };
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
 const MAX_NAME_LENGTH = 80;
-const MAX_BROKER_LENGTH = 80;
 
 type AccountInputRaw = {
   name: unknown;
   type: unknown;
-  broker?: unknown;
   currency: unknown;
 };
 
 type AccountInput = {
   name: string;
   type: AccountType;
-  broker: string | null;
   currency: string;
 };
 
@@ -53,13 +50,6 @@ function validateCurrency(
   return { ok: true, value };
 }
 
-function normalizeBroker(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, MAX_BROKER_LENGTH);
-}
-
 function parseAccountInput(
   input: AccountInputRaw,
 ): { ok: true; value: AccountInput } | { ok: false; error: string } {
@@ -74,7 +64,6 @@ function parseAccountInput(
     value: {
       name: name.value,
       type: type.value,
-      broker: normalizeBroker(input.broker),
       currency: currency.value,
     },
   };
@@ -89,7 +78,6 @@ function revalidateAccountSurfaces() {
 export async function createAccount(input: {
   name: string;
   type: string;
-  broker?: string | null;
   currency: string;
 }): Promise<AccountActionResult> {
   const parsed = parseAccountInput(input);
@@ -105,7 +93,6 @@ export async function createAccount(input: {
     user_id: user.id,
     name: parsed.value.name,
     type: parsed.value.type,
-    broker: parsed.value.broker,
     currency: parsed.value.currency,
   });
   if (error) return { ok: false, error: error.message };
@@ -147,7 +134,7 @@ export async function renameAccount(
 
 export async function updateAccount(
   accountId: string,
-  input: { name: string; type: string; broker?: string | null; currency: string },
+  input: { name: string; type: string; currency: string },
 ): Promise<AccountActionResult> {
   if (!isUuid(accountId)) return { ok: false, error: "Identifiant de compte invalide." };
   const parsed = parseAccountInput(input);
@@ -164,7 +151,6 @@ export async function updateAccount(
     .update({
       name: parsed.value.name,
       type: parsed.value.type,
-      broker: parsed.value.broker,
       currency: parsed.value.currency,
     })
     .eq("id", accountId)

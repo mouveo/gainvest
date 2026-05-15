@@ -198,7 +198,6 @@ describe("createAccount", () => {
     const result = await createAccount({
       name: "Société Mouveo",
       type: "cto",
-      broker: "Bourse Direct",
       currency: "eur",
     });
     expect(result).toEqual({ ok: true });
@@ -207,7 +206,6 @@ describe("createAccount", () => {
       user_id: USER_ID,
       name: "Société Mouveo",
       type: "cto",
-      broker: "Bourse Direct",
       currency: "EUR",
     });
   });

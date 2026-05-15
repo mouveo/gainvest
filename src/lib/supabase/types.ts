@@ -36,7 +36,6 @@ export type Database = {
     Tables: {
       accounts: {
         Row: {
-          broker: string | null
           created_at: string
           currency: string
           id: string
@@ -47,7 +46,6 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          broker?: string | null
           created_at?: string
           currency?: string
           id?: string
@@ -58,7 +56,6 @@ export type Database = {
           user_id: string
         }
         Update: {
-          broker?: string | null
           created_at?: string
           currency?: string
           id?: string
