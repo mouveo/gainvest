@@ -53,9 +53,11 @@ export async function getOrders(active?: ActiveAccount): Promise<OrderRow[]> {
         execution_venue,
         broker,
         support,
+        convert_pair_id,
         instrument:instruments (
           id,
           isin,
+          symbol,
           name,
           asset_class,
           currency,
@@ -83,6 +85,7 @@ export async function getOrders(active?: ActiveAccount): Promise<OrderRow[]> {
     const instrument = row.instrument;
     let isin = "";
     let instrumentId: string | null = null;
+    let instrumentSymbol: string | null = null;
     let preferredMic: string | null = null;
     let preferredCurrency: string | null = null;
     let instrumentName: string;
@@ -95,6 +98,7 @@ export async function getOrders(active?: ActiveAccount): Promise<OrderRow[]> {
     if (instrument) {
       isin = instrument.isin ?? "";
       instrumentId = instrument.id ?? null;
+      instrumentSymbol = instrument.symbol ?? null;
       preferredMic = instrument.preferred_mic ?? null;
       preferredCurrency = instrument.preferred_currency ?? null;
       instrumentName = instrument.name;
@@ -120,12 +124,14 @@ export async function getOrders(active?: ActiveAccount): Promise<OrderRow[]> {
       id: row.id,
       isin,
       instrumentId,
+      instrumentSymbol,
       preferredMic,
       preferredCurrency,
       instrumentName,
       assetClass,
       currency,
       kind,
+      convertPairId: row.convert_pair_id ?? null,
       tradeDate: row.trade_date,
       tradeTime: row.trade_time,
       quantity: row.quantity == null ? null : Number(row.quantity),
@@ -163,20 +169,52 @@ export async function getCurrentPrices(
   orders: OrderRow[],
 ): Promise<Record<string, CurrentPrice>> {
   const supabase = await createClient();
-  const tradable = orders.filter((o) => (o.kind === "buy" || o.kind === "sell") && o.isin !== "");
-  const isins = Array.from(new Set(tradable.map((o) => o.isin)));
-  if (isins.length === 0) return {};
+  // Quote lookups apply to tradable rows that reference an instrument — either
+  // by id (canonical) or by ISIN (legacy). Crypto rows carry an instrumentId
+  // but no ISIN, so we can't filter on ISIN any more.
+  const tradable = orders.filter(
+    (o) => (o.kind === "buy" || o.kind === "sell") && (o.instrumentId || o.isin),
+  );
+  const instrumentIds = Array.from(
+    new Set(tradable.map((o) => o.instrumentId).filter((x): x is string => !!x)),
+  );
+  const isins = Array.from(
+    new Set(tradable.map((o) => o.isin).filter((x): x is string => !!x)),
+  );
+  if (instrumentIds.length === 0 && isins.length === 0) return {};
 
-  const { data, error } = await supabase
-    .from("instruments")
-    .select("isin, current_price, currency, asset_class")
-    .in("isin", isins);
-
-  if (error) throw error;
+  const byInstrumentId = new Map<
+    string,
+    { id: string; isin: string | null; current_price: number | null; currency: string | null; asset_class: string | null }
+  >();
+  if (instrumentIds.length > 0) {
+    const { data, error } = await supabase
+      .from("instruments")
+      .select("id, isin, current_price, currency, asset_class")
+      .in("id", instrumentIds);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      if (row.id) byInstrumentId.set(row.id, row);
+    }
+  }
+  // Back-compat: orders with an ISIN but no instrumentId still need to resolve.
+  const isinsMissingId = isins.filter(
+    (isin) => !Array.from(byInstrumentId.values()).some((r) => r.isin === isin),
+  );
+  if (isinsMissingId.length > 0) {
+    const { data, error } = await supabase
+      .from("instruments")
+      .select("id, isin, current_price, currency, asset_class")
+      .in("isin", isinsMissingId);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      if (row.id) byInstrumentId.set(row.id, row);
+    }
+  }
 
   // Pull every FX rate we might need (skip EUR, rate is 1).
   const currencies = new Set<string>();
-  for (const row of data ?? []) {
+  for (const row of byInstrumentId.values()) {
     const ccy = (row.currency ?? "EUR").toUpperCase();
     if (ccy !== "EUR") currencies.add(ccy);
   }
@@ -194,55 +232,83 @@ export async function getCurrentPrices(
     }
   }
 
-  const assetClassByIsin = new Map<string, string>();
+  // Build a map keyed by both the instrument id and the ISIN (when present)
+  // so the replay can look up by either ident.
   const map: Record<string, CurrentPrice> = {};
-  for (const row of data ?? []) {
-    if (!row.isin) continue;
+  const assetClassById = new Map<string, string>();
+  for (const row of byInstrumentId.values()) {
     const ccy = (row.currency ?? "EUR").toUpperCase();
-    const fxToEur = fxByCcy[ccy] ?? 1; // unknown currency → no conversion (best effort)
-    if (row.asset_class) assetClassByIsin.set(row.isin, row.asset_class);
+    const fxToEur = fxByCcy[ccy] ?? 1;
+    if (row.asset_class) assetClassById.set(row.id, row.asset_class);
     if (row.current_price == null) continue;
     const native = Number(row.current_price);
     const eur = row.asset_class === "bond" ? (native / 100) * fxToEur : native * fxToEur;
-    map[row.isin] = { native, eur, currency: ccy, fxToEur };
+    const entry: CurrentPrice = { native, eur, currency: ccy, fxToEur };
+    map[row.id] = entry;
+    if (row.isin) map[row.isin] = entry;
   }
 
   // Fallback: use the most recent buy price for instruments without a quote.
-  // `transactions.price` is stored in native currency. For bonds it's already
-  // expressed in % of par (the order sheet captures the quote that way), so
-  // the bond/non-bond branching mirrors the live-quote path.
-  for (const isin of isins) {
-    if (map[isin] != null) continue;
-    const fallback = tradable.find((o) => o.isin === isin && o.kind === "buy");
+  // Apply per-instrumentId first; ISIN fallback covers legacy callers.
+  const idsAlreadyPriced = new Set(Object.keys(map));
+  for (const row of byInstrumentId.values()) {
+    if (idsAlreadyPriced.has(row.id)) continue;
+    const fallback = tradable.find(
+      (o) => o.kind === "buy" && ((row.id && o.instrumentId === row.id) || (row.isin && o.isin === row.isin)),
+    );
     if (!fallback || fallback.price == null) continue;
     const native = fallback.price;
     const ccy = (fallback.currency ?? "EUR").toUpperCase();
     const fxToEur = fxByCcy[ccy] ?? 1;
-    const assetClass = assetClassByIsin.get(isin) ?? fallback.assetClass;
+    const assetClass = assetClassById.get(row.id) ?? fallback.assetClass;
     const eur = assetClass === "bond" ? (native / 100) * fxToEur : native * fxToEur;
-    map[isin] = { native, eur, currency: ccy, fxToEur };
+    const entry: CurrentPrice = { native, eur, currency: ccy, fxToEur };
+    map[row.id] = entry;
+    if (row.isin) map[row.isin] = entry;
   }
 
   return map;
 }
 
 async function getPricesUpdatedAt(orders: OrderRow[]): Promise<string | null> {
-  const isins = Array.from(new Set(orders.map((o) => o.isin).filter(Boolean)));
-  if (isins.length === 0) return null;
+  const instrumentIds = Array.from(
+    new Set(orders.map((o) => o.instrumentId).filter((x): x is string => !!x)),
+  );
+  const isins = Array.from(
+    new Set(
+      orders
+        .filter((o) => !o.instrumentId)
+        .map((o) => o.isin)
+        .filter(Boolean),
+    ),
+  );
+  if (instrumentIds.length === 0 && isins.length === 0) return null;
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("instruments")
-    .select("isin,current_price_updated_at")
-    .in("isin", isins);
-
-  if (error) throw error;
-
   let latest: string | null = null;
-  for (const row of data ?? []) {
-    const ts = row.current_price_updated_at;
-    if (!ts) continue;
-    if (latest === null || ts > latest) latest = ts;
+  const consume = (rows: { current_price_updated_at: string | null }[] | null) => {
+    for (const row of rows ?? []) {
+      const ts = row.current_price_updated_at;
+      if (!ts) continue;
+      if (latest === null || ts > latest) latest = ts;
+    }
+  };
+
+  if (instrumentIds.length > 0) {
+    const { data, error } = await supabase
+      .from("instruments")
+      .select("id,current_price_updated_at")
+      .in("id", instrumentIds);
+    if (error) throw error;
+    consume(data);
+  }
+  if (isins.length > 0) {
+    const { data, error } = await supabase
+      .from("instruments")
+      .select("isin,current_price_updated_at")
+      .in("isin", isins);
+    if (error) throw error;
+    consume(data);
   }
   return latest;
 }

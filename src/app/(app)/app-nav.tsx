@@ -5,11 +5,18 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 
+const CURRENT_YEAR = new Date().getFullYear();
+
 const ITEMS: { href: string; label: string; match: (path: string) => boolean }[] = [
   {
     href: "/portfolio",
     label: "Portefeuille",
     match: (p) => p === "/portfolio" || p.startsWith("/portfolio/"),
+  },
+  {
+    href: `/fiscal/crypto/${CURRENT_YEAR}`,
+    label: "Fiscal",
+    match: (p) => p.startsWith("/fiscal"),
   },
 ];
 

@@ -67,6 +67,33 @@ export type Database = {
         }
         Relationships: []
       }
+      crypto_prices_daily: {
+        Row: {
+          currency: string
+          date: string
+          fetched_at: string
+          price_eur: number
+          provider_symbol: string
+          source: string
+        }
+        Insert: {
+          currency?: string
+          date: string
+          fetched_at?: string
+          price_eur: number
+          provider_symbol: string
+          source?: string
+        }
+        Update: {
+          currency?: string
+          date?: string
+          fetched_at?: string
+          price_eur?: number
+          provider_symbol?: string
+          source?: string
+        }
+        Relationships: []
+      }
       fx_rates: {
         Row: {
           currency: string
@@ -187,6 +214,7 @@ export type Database = {
         Row: {
           account_id: string
           broker: string | null
+          convert_pair_id: string | null
           created_at: string
           currency: string
           execution_venue: string | null
@@ -211,6 +239,7 @@ export type Database = {
         Insert: {
           account_id: string
           broker?: string | null
+          convert_pair_id?: string | null
           created_at?: string
           currency?: string
           execution_venue?: string | null
@@ -235,6 +264,7 @@ export type Database = {
         Update: {
           account_id?: string
           broker?: string | null
+          convert_pair_id?: string | null
           created_at?: string
           currency?: string
           execution_venue?: string | null

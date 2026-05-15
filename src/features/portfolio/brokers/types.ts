@@ -74,6 +74,10 @@ export type ParsedRow = {
   // the import action only writes the pair when complete.
   preferredMic?: string | null;
   preferredCurrency?: string | null;
+  // Crypto-only: groups the two legs of a Coinbase Convert (the sell-side
+  // row and the buy-side row of one logical conversion share the same id).
+  // Persisted on `transactions.convert_pair_id`.
+  convertPairId?: string | null;
 };
 
 export type FileParseResult = { rows: ParsedRow[]; warnings: string[] };

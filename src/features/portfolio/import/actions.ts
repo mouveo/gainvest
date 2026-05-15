@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { lookupIsin } from "@/lib/openfigi";
+import { coingeckoProvider } from "@/lib/quotes";
 import { createClient } from "@/lib/supabase/server";
 
 import type { BondMetadata } from "../bonds/parse-symbol";
@@ -25,6 +26,7 @@ export type ImportResult =
 type InstrumentLite = {
   id: string;
   isin: string | null;
+  symbol?: string | null;
   name: string;
   asset_class: string;
   currency: string;
@@ -33,6 +35,8 @@ type InstrumentLite = {
   bond_coupon_frequency: number | null;
   preferred_mic: string | null;
   preferred_currency: string | null;
+  provider?: string | null;
+  provider_symbol?: string | null;
 };
 
 function round2(n: number): number {
@@ -179,8 +183,14 @@ export async function importBrokerOrders(
       continue;
     }
     if (row.kind === "buy" || row.kind === "sell") {
-      if (!row.isin) {
-        failed.push({ row: row.rawLine, reason: "ISIN obligatoire pour achat/vente" });
+      const isCrypto = row.assetClass === "crypto";
+      if (!row.isin && !(isCrypto && row.symbol)) {
+        failed.push({
+          row: row.rawLine,
+          reason: isCrypto
+            ? "Symbole crypto obligatoire pour achat/vente"
+            : "ISIN obligatoire pour achat/vente",
+        });
         continue;
       }
       if (row.quantity == null || row.quantity <= 0) {
@@ -378,6 +388,93 @@ export async function importBrokerOrders(
     byIsin.set(isin, upserted);
   }
 
+  // Crypto path — instruments are keyed on (symbol, asset_class='crypto')
+  // because exchanges don't publish ISINs for crypto. OpenFIGI is bypassed:
+  // we resolve the canonical CoinGecko id via the provider and persist it on
+  // `instruments.provider_symbol` so refreshPrices can quote without a second
+  // round-trip.
+  const bySymbol = new Map<string, InstrumentLite>();
+  const cryptoSymbols = Array.from(
+    new Set(
+      valid
+        .filter((r) => !r.isin && r.assetClass === "crypto" && r.symbol)
+        .map((r) => r.symbol as string),
+    ),
+  );
+
+  if (cryptoSymbols.length > 0) {
+    const { data: cryptoData, error: cryptoErr } = await supabase
+      .from("instruments")
+      .select(
+        "id, isin, symbol, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency, preferred_mic, preferred_currency, provider, provider_symbol",
+      )
+      .eq("asset_class", "crypto")
+      .in("symbol", cryptoSymbols);
+    if (cryptoErr) return { ok: false, error: cryptoErr.message };
+    for (const row of cryptoData ?? []) {
+      if (row.symbol) bySymbol.set(row.symbol, row);
+    }
+  }
+
+  for (const sym of cryptoSymbols) {
+    if (bySymbol.has(sym)) continue;
+    const sample = valid.find(
+      (r) => !r.isin && r.assetClass === "crypto" && r.symbol === sym,
+    );
+    if (!sample) continue;
+
+    const listings = await coingeckoProvider.searchListings(sym);
+    const chosen = listings[0] ?? null;
+    if (!chosen) {
+      // No CoinGecko match — surface as a failure for every row tied to this
+      // symbol so the user knows the symbol is unrecognised.
+      for (const r of valid) {
+        if (!r.isin && r.assetClass === "crypto" && r.symbol === sym) {
+          failed.push({
+            row: r.rawLine,
+            reason: `Symbole crypto "${sym}" introuvable sur CoinGecko`,
+          });
+        }
+      }
+      continue;
+    }
+
+    const cryptoPayload = {
+      isin: null,
+      symbol: sym,
+      mic: null,
+      name: sample.name ?? sym,
+      asset_class: "crypto" as AssetClass,
+      currency: "EUR",
+      country: null,
+      provider: "coingecko",
+      provider_symbol: chosen.providerSymbol,
+      preferred_mic: null,
+      preferred_currency: "EUR",
+    };
+    const { data: insertedCrypto, error: cryptoInsErr } = await supabase
+      .from("instruments")
+      .insert(cryptoPayload)
+      .select(
+        "id, isin, symbol, name, asset_class, currency, bond_coupon_rate, bond_maturity_date, bond_coupon_frequency, preferred_mic, preferred_currency, provider, provider_symbol",
+      )
+      .single();
+    if (cryptoInsErr || !insertedCrypto) {
+      for (const r of valid) {
+        if (!r.isin && r.assetClass === "crypto" && r.symbol === sym) {
+          failed.push({
+            row: r.rawLine,
+            reason: `Création instrument crypto "${sym}" échouée${
+              cryptoInsErr ? ` (${cryptoInsErr.message})` : ""
+            }`,
+          });
+        }
+      }
+      continue;
+    }
+    bySymbol.set(sym, insertedCrypto);
+  }
+
   // Fenêtre min/max pour la dédup. Charger external_id ET clés synthétiques sur la fenêtre.
   const dates = valid.map((r) => r.date).filter(Boolean);
   const existingKeys = new Set<string>();
@@ -425,6 +522,7 @@ export async function importBrokerOrders(
     broker: string;
     support: Support;
     external_id: string | null;
+    convert_pair_id: string | null;
   };
 
   const toInsert: Insert[] = [];
@@ -455,6 +553,14 @@ export async function importBrokerOrders(
         instrumentId = inst.id;
         instrumentCurrency = inst.currency;
       }
+    } else if (row.assetClass === "crypto" && row.symbol) {
+      const inst = bySymbol.get(row.symbol);
+      if (!inst) {
+        // Failure already recorded during crypto resolution above.
+        continue;
+      }
+      instrumentId = inst.id;
+      instrumentCurrency = inst.currency;
     }
 
     const grossAmount = round2(row.grossAmount ?? row.totalAmount);
@@ -501,6 +607,7 @@ export async function importBrokerOrders(
       broker: row.broker ?? brokerProfile.name,
       support,
       external_id: row.externalId ?? null,
+      convert_pair_id: row.convertPairId ?? null,
     });
   }
 

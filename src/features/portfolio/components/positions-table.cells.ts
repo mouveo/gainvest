@@ -11,7 +11,9 @@ export type EurTextCell = { kind: "eur"; text: string; value: number };
 export type EditableEurCell = { kind: "editable-eur"; value: number };
 
 export type PruRender = DashCell | PctParCell | EurTextCell;
-export type CurrentPriceRender = DashCell | PctParCell | EditableEurCell;
+// `eur` is used for crypto current price — read-only since CoinGecko is the
+// source of truth and there's no manual override in V1.
+export type CurrentPriceRender = DashCell | PctParCell | EditableEurCell | EurTextCell;
 
 type PruInput = Pick<Position, "assetClass" | "pru" | "pruPctPar">;
 type CurrentPriceInput = Pick<Position, "assetClass" | "currentPrice" | "currentPctPar">;
@@ -19,6 +21,14 @@ type PruGrossInput = Pick<Position, "assetClass" | "pruGross">;
 
 function eurUnitText(value: number): string {
   return `${fmtNum(value, value < 50 ? 3 : 2)} €`;
+}
+
+// Crypto prices live on a much wider range than equities/ETFs (BTC ≈ €60 000
+// down to memecoins below €0.01), so we adapt the decimal width: 2dp once
+// the price clears one euro, 6dp below.
+function cryptoUnitText(value: number): string {
+  const dp = Math.abs(value) >= 1 ? 2 : 6;
+  return `${fmtNum(value, dp)} €`;
 }
 
 function pctParText(value: number): string {
@@ -30,6 +40,9 @@ export function pruCell(p: PruInput): PruRender {
   if (p.assetClass === "bond" && p.pruPctPar != null) {
     return { kind: "pctPar", text: pctParText(p.pruPctPar), value: p.pruPctPar };
   }
+  if (p.assetClass === "crypto") {
+    return { kind: "eur", text: cryptoUnitText(p.pru), value: p.pru };
+  }
   return { kind: "eur", text: eurUnitText(p.pru), value: p.pru };
 }
 
@@ -38,6 +51,13 @@ export function pruCell(p: PruInput): PruRender {
 // than mixing units across rows.
 export function pruGrossCell(p: PruGrossInput): PruRender {
   if (p.assetClass === "cash" || p.assetClass === "bond") return { kind: "dash" };
+  if (p.assetClass === "crypto") {
+    return {
+      kind: "eur",
+      text: cryptoUnitText(p.pruGross),
+      value: p.pruGross,
+    };
+  }
   return {
     kind: "eur",
     text: fmtCcy(p.pruGross, p.pruGross < 50 ? 3 : 2),
@@ -52,6 +72,15 @@ export function currentPriceCell(p: CurrentPriceInput): CurrentPriceRender {
       kind: "pctPar",
       text: pctParText(p.currentPctPar),
       value: p.currentPctPar,
+    };
+  }
+  // Crypto: CoinGecko is the source of truth and there's no point letting the
+  // user type a price by hand in V1 — surface a read-only EUR text.
+  if (p.assetClass === "crypto") {
+    return {
+      kind: "eur",
+      text: cryptoUnitText(p.currentPrice),
+      value: p.currentPrice,
     };
   }
   return { kind: "editable-eur", value: p.currentPrice };
@@ -125,6 +154,9 @@ export function orderPriceCell(
 ): OrderPriceCell {
   if (assetClass === "bond") {
     return { kind: "pctPar", text: pctParText(order.price) };
+  }
+  if (assetClass === "crypto") {
+    return { kind: "eur", text: cryptoUnitText(order.price) };
   }
   const dp = order.price < 50 ? 3 : 2;
   return { kind: "eur", text: `${fmtNum(order.price, dp)} €` };

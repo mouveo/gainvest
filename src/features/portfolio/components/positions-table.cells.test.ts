@@ -17,6 +17,7 @@ function pos(overrides: Partial<Position> = {}): Position {
     key: "k",
     isin: "FR0010315770",
     instrumentId: null,
+    instrumentSymbol: null,
     preferredMic: null,
     preferredCurrency: null,
     support: "CTO",
@@ -268,5 +269,65 @@ describe("orderPriceCell", () => {
       kind: "eur",
       text: "12,345 €",
     });
+  });
+
+  it("renders a crypto price >= 1 with 2 dp", () => {
+    expect(orderPriceCell({ price: 60000 }, "crypto")).toEqual({
+      kind: "eur",
+      text: "60 000,00 €",
+    });
+  });
+
+  it("renders a crypto price < 1 with 6 dp", () => {
+    expect(orderPriceCell({ price: 0.012345 }, "crypto")).toEqual({
+      kind: "eur",
+      text: "0,012345 €",
+    });
+  });
+});
+
+describe("crypto cells", () => {
+  it("pruCell returns an EUR text cell for crypto (no `% par`)", () => {
+    const cell = pruCell(pos({ assetClass: "crypto", pru: 60000 }));
+    expect(cell.kind).toBe("eur");
+    if (cell.kind === "eur") {
+      expect(cell.text).toBe("60 000,00 €");
+      expect(cell.value).toBe(60000);
+    }
+  });
+
+  it("pruCell formats a sub-1 crypto PRU with 6 dp precision", () => {
+    const cell = pruCell(pos({ assetClass: "crypto", pru: 0.123456 }));
+    expect(cell.kind).toBe("eur");
+    if (cell.kind === "eur") {
+      expect(cell.text).toBe("0,123456 €");
+    }
+  });
+
+  it("currentPriceCell returns a read-only EUR text for crypto (not editable)", () => {
+    const cell = currentPriceCell(pos({ assetClass: "crypto", currentPrice: 60000 }));
+    expect(cell.kind).toBe("eur");
+    if (cell.kind === "eur") {
+      expect(cell.text).toBe("60 000,00 €");
+      expect(cell.value).toBe(60000);
+    }
+  });
+
+  it("currentPriceCell renders a sub-1 crypto quote with 6 dp", () => {
+    const cell = currentPriceCell(pos({ assetClass: "crypto", currentPrice: 0.000123 }));
+    expect(cell.kind).toBe("eur");
+    if (cell.kind === "eur") {
+      expect(cell.text).toBe("0,000123 €");
+    }
+  });
+
+  it("pruGrossCell returns an EUR text cell for crypto with adaptive precision", () => {
+    const cellHigh = pruGrossCell(pos({ assetClass: "crypto", pruGross: 60000 }));
+    expect(cellHigh.kind).toBe("eur");
+    if (cellHigh.kind === "eur") expect(cellHigh.text).toBe("60 000,00 €");
+
+    const cellLow = pruGrossCell(pos({ assetClass: "crypto", pruGross: 0.5 }));
+    expect(cellLow.kind).toBe("eur");
+    if (cellLow.kind === "eur") expect(cellLow.text).toBe("0,500000 €");
   });
 });

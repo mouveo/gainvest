@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import { type Listing, pickPreferredListing, quoteProvider } from "@/lib/quotes";
+import {
+  coingeckoProvider,
+  type Listing,
+  pickPreferredListing,
+  pickProviderFor,
+  quoteProvider,
+} from "@/lib/quotes";
 import { findListingForPreference, shouldRejectDivergentQuote } from "@/lib/quotes/ranking";
 import { createClient } from "@/lib/supabase/server";
 
@@ -52,6 +58,9 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const isin = String(formData.get("isin") ?? "")
     .trim()
     .toUpperCase();
+  const symbol = String(formData.get("symbol") ?? "")
+    .trim()
+    .toUpperCase();
   const name = String(formData.get("name") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "buy");
   if (!ADD_ORDER_KINDS.includes(kindRaw as AddOrderKind)) {
@@ -89,11 +98,19 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
 
   const support = supportRaw as Support;
   const isCashKind = kind !== "buy" && kind !== "sell";
+  // Crypto branch: support=CRYPTO or asset_class=crypto. ISIN is not required
+  // — the symbol field carries identity and the instrument is resolved via
+  // CoinGecko (same path as the Coinbase importer, LOT 3).
+  const isCryptoOrder = !isCashKind && (support === "CRYPTO" || assetClass === "crypto");
 
   if (!tradeDate) return { ok: false, error: "La date d'exécution est requise." };
 
   if (!isCashKind) {
-    if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
+    if (isCryptoOrder) {
+      if (!symbol) return { ok: false, error: "Symbole crypto requis." };
+    } else {
+      if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
+    }
     if (!name) return { ok: false, error: "Le nom de l'instrument est requis." };
     if (quantity <= 0) return { ok: false, error: "La quantité doit être > 0." };
     if (price <= 0) return { ok: false, error: "Le cours doit être > 0." };
@@ -120,7 +137,49 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const accountId = resolved.accountId;
 
   let instrumentId: string | null = null;
-  if (!isCashKind) {
+  if (isCryptoOrder) {
+    // Crypto: lookup by (symbol, asset_class='crypto'). No OpenFIGI; if absent
+    // locally, resolve via CoinGecko and create with provider/provider_symbol
+    // pre-filled so refreshPrices can quote immediately.
+    const { data: existing, error: existErr } = await supabase
+      .from("instruments")
+      .select("id")
+      .eq("symbol", symbol)
+      .eq("asset_class", "crypto")
+      .maybeSingle();
+    if (existErr) return { ok: false, error: existErr.message };
+    if (existing) {
+      instrumentId = existing.id;
+    } else {
+      const listings = await coingeckoProvider.searchListings(symbol);
+      const chosen = listings[0] ?? null;
+      if (!chosen) {
+        return {
+          ok: false,
+          error: `Symbole crypto "${symbol}" introuvable sur CoinGecko.`,
+        };
+      }
+      const { data: inserted, error: insErr } = await supabase
+        .from("instruments")
+        .insert({
+          isin: null,
+          symbol,
+          mic: null,
+          name: name || symbol,
+          asset_class: "crypto",
+          currency: "EUR",
+          country: null,
+          provider: "coingecko",
+          provider_symbol: chosen.providerSymbol,
+          preferred_mic: null,
+          preferred_currency: "EUR",
+        })
+        .select("id")
+        .single();
+      if (insErr) return { ok: false, error: insErr.message };
+      instrumentId = inserted.id;
+    }
+  } else if (!isCashKind) {
     // Find the existing catalog row keyed on (symbol = isin, mic IS NULL).
     // We deliberately avoid upsert on `symbol,mic` here: an upsert that
     // includes `preferred_mic` would overwrite a user's previously locked
@@ -550,6 +609,8 @@ function parseDec(v: FormDataEntryValue | null): number {
 type RefreshableInstrument = {
   id: string;
   isin: string | null;
+  symbol: string | null;
+  asset_class: string | null;
   name: string;
   currency: string;
   preferred_mic: string | null;
@@ -582,6 +643,8 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
         instrument:instruments(
           id,
           isin,
+          symbol,
+          asset_class,
           name,
           currency,
           preferred_mic,
@@ -609,6 +672,8 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
     byId.set(inst.id, {
       id: inst.id,
       isin: inst.isin ?? null,
+      symbol: inst.symbol ?? null,
+      asset_class: inst.asset_class ?? null,
       name: inst.name,
       currency: inst.currency ?? "EUR",
       preferred_mic: inst.preferred_mic ?? null,
@@ -636,19 +701,22 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
     stale.push(inst);
   }
 
-  const providerName = quoteProvider.name;
-
   // Step 1 — auto-pick a preferred listing for instruments without one.
+  // Crypto uses CoinGecko (search by symbol, EUR-native), everything else
+  // routes through EODHD with an ISIN.
   for (const inst of stale) {
     if (inst.preferred_mic) continue;
-    if (!inst.isin) {
-      failed.push(inst.name);
+    const provider = pickProviderFor(inst.asset_class);
+    const isCrypto = inst.asset_class === "crypto";
+    const searchKey = isCrypto ? inst.symbol : inst.isin;
+    if (!searchKey) {
+      failed.push(inst.isin ?? inst.symbol ?? inst.name);
       continue;
     }
-    const listings = await quoteProvider.searchListings(inst.isin);
-    const chosen = pickPreferredListing(listings);
+    const listings = await provider.searchListings(searchKey);
+    const chosen = isCrypto ? listings[0] : pickPreferredListing(listings);
     if (!chosen) {
-      failed.push(inst.isin);
+      failed.push(searchKey);
       continue;
     }
     const { error: updErr } = await supabase
@@ -657,18 +725,18 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
         preferred_mic: chosen.mic,
         preferred_currency: chosen.currency,
         currency: chosen.currency,
-        provider: providerName,
+        provider: provider.name,
         provider_symbol: chosen.providerSymbol,
       })
       .eq("id", inst.id);
     if (updErr) {
-      failed.push(inst.isin);
+      failed.push(searchKey);
       continue;
     }
     inst.preferred_mic = chosen.mic;
     inst.preferred_currency = chosen.currency;
     inst.currency = chosen.currency;
-    inst.provider = providerName;
+    inst.provider = provider.name;
     inst.provider_symbol = chosen.providerSymbol;
   }
 
@@ -676,31 +744,36 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
   // matches the active one (or the symbol was never persisted).
   for (const inst of stale) {
     if (!inst.preferred_mic) continue;
-    if (inst.provider === providerName && inst.provider_symbol) continue;
-    if (!inst.isin) {
-      failed.push(inst.name);
+    const provider = pickProviderFor(inst.asset_class);
+    if (inst.provider === provider.name && inst.provider_symbol) continue;
+    const isCrypto = inst.asset_class === "crypto";
+    const searchKey = isCrypto ? inst.symbol : inst.isin;
+    if (!searchKey) {
+      failed.push(inst.isin ?? inst.symbol ?? inst.name);
       continue;
     }
-    const listings = await quoteProvider.searchListings(inst.isin);
-    const match = findListingForPreference(listings, inst.preferred_mic, inst.preferred_currency);
+    const listings = await provider.searchListings(searchKey);
+    const match = isCrypto
+      ? (listings[0] ?? null)
+      : findListingForPreference(listings, inst.preferred_mic, inst.preferred_currency);
     if (!match) {
-      failed.push(inst.isin);
+      failed.push(searchKey);
       continue;
     }
     const nextCurrency = inst.preferred_currency ?? match.currency;
     const { error: updErr } = await supabase
       .from("instruments")
       .update({
-        provider: providerName,
+        provider: provider.name,
         provider_symbol: match.providerSymbol,
         currency: nextCurrency,
       })
       .eq("id", inst.id);
     if (updErr) {
-      failed.push(inst.isin);
+      failed.push(searchKey);
       continue;
     }
-    inst.provider = providerName;
+    inst.provider = provider.name;
     inst.provider_symbol = match.providerSymbol;
     inst.currency = nextCurrency;
   }
@@ -710,7 +783,8 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
   const updatedAt = new Date().toISOString();
   for (const inst of stale) {
     if (!inst.provider_symbol) continue;
-    const quote = await quoteProvider.fetchQuote(inst.provider_symbol);
+    const provider = pickProviderFor(inst.asset_class);
+    const quote = await provider.fetchQuote(inst.provider_symbol);
     if (!quote) {
       failed.push(inst.isin ?? inst.name);
       continue;

@@ -16,25 +16,38 @@ vi.mock("@/features/accounts/active", () => ({
 
 vi.mock("@/lib/quotes", async () => {
   const actual = await vi.importActual<typeof import("@/lib/quotes")>("@/lib/quotes");
+  const eodhdMock = {
+    name: "eodhd",
+    searchListings: vi.fn<(isin: string) => Promise<Listing[]>>(),
+    fetchQuote: vi.fn<(symbol: string) => Promise<Quote | null>>(),
+    fetchFxToEur: vi.fn<(ccy: string) => Promise<number | null>>(),
+  };
+  const coingeckoMock = {
+    name: "coingecko",
+    searchListings: vi.fn<(query: string) => Promise<Listing[]>>(),
+    fetchQuote: vi.fn<(symbol: string) => Promise<Quote | null>>(),
+    fetchFxToEur: vi.fn<(ccy: string) => Promise<number | null>>(),
+  };
   return {
     ...actual,
-    quoteProvider: {
-      name: "eodhd",
-      searchListings: vi.fn<(isin: string) => Promise<Listing[]>>(),
-      fetchQuote: vi.fn<(symbol: string) => Promise<Quote | null>>(),
-      fetchFxToEur: vi.fn<(ccy: string) => Promise<number | null>>(),
-    },
+    quoteProvider: eodhdMock,
+    eodhdProvider: eodhdMock,
+    coingeckoProvider: coingeckoMock,
+    pickProviderFor: (assetClass: string | null | undefined) =>
+      assetClass === "crypto" ? coingeckoMock : eodhdMock,
   };
 });
 
 import { createClient } from "@/lib/supabase/server";
-import { quoteProvider } from "@/lib/quotes";
+import { coingeckoProvider, quoteProvider } from "@/lib/quotes";
 
 import { refreshPrices } from "./actions";
 
 type InstrumentRow = {
   id: string;
   isin: string | null;
+  symbol: string | null;
+  asset_class: string | null;
   name: string;
   currency: string;
   preferred_mic: string | null;
@@ -52,6 +65,8 @@ function makeInstrument(overrides: Partial<InstrumentRow>): InstrumentRow {
   return {
     id: "i1",
     isin: "FR0010655712",
+    symbol: null,
+    asset_class: null,
     name: "Test Instrument",
     currency: "EUR",
     preferred_mic: null,
@@ -124,11 +139,17 @@ const createClientMock = vi.mocked(createClient);
 const searchListings = quoteProvider.searchListings as ReturnType<typeof vi.fn>;
 const fetchQuote = quoteProvider.fetchQuote as ReturnType<typeof vi.fn>;
 const fetchFxToEur = quoteProvider.fetchFxToEur as ReturnType<typeof vi.fn>;
+const cgSearchListings = coingeckoProvider.searchListings as ReturnType<typeof vi.fn>;
+const cgFetchQuote = coingeckoProvider.fetchQuote as ReturnType<typeof vi.fn>;
+const cgFetchFxToEur = coingeckoProvider.fetchFxToEur as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   searchListings.mockReset();
   fetchQuote.mockReset();
   fetchFxToEur.mockReset();
+  cgSearchListings.mockReset();
+  cgFetchQuote.mockReset();
+  cgFetchFxToEur.mockReset();
   createClientMock.mockReset();
 });
 
@@ -335,6 +356,91 @@ describe("refreshPrices", () => {
       currency: "GBX",
     });
     expect(fetchFxToEur).toHaveBeenCalledWith("GBX");
+  });
+
+  it("routes a crypto instrument with a stored provider_symbol straight to CoinGecko fetchQuote", async () => {
+    const inst = makeInstrument({
+      isin: null,
+      symbol: "BTC",
+      asset_class: "crypto",
+      preferred_mic: "CRYPTO",
+      preferred_currency: "EUR",
+      currency: "EUR",
+      provider: "coingecko",
+      provider_symbol: "bitcoin",
+    });
+    const sb = makeSupabase({ instruments: [inst] });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    cgFetchQuote.mockResolvedValue({ close: 50000, fetchedAt: "2026-05-12T00:00:00.000Z" });
+
+    const result = await refreshPrices({ force: true });
+
+    expect(result.refreshed).toBe(1);
+    expect(result.failed).toEqual([]);
+    expect(cgSearchListings).not.toHaveBeenCalled();
+    expect(searchListings).not.toHaveBeenCalled();
+    expect(cgFetchQuote).toHaveBeenCalledWith("bitcoin");
+    expect(fetchQuote).not.toHaveBeenCalled();
+    expect(sb.updates[0]!.payload).toMatchObject({ current_price: 50000 });
+    // EUR-native crypto: no FX upsert.
+    expect(sb.upserts).toHaveLength(0);
+  });
+
+  it("auto-picks a crypto listing via CoinGecko search when none is stored", async () => {
+    const inst = makeInstrument({
+      isin: null,
+      symbol: "BTC",
+      asset_class: "crypto",
+      preferred_mic: null,
+      preferred_currency: null,
+    });
+    const sb = makeSupabase({ instruments: [inst] });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    cgSearchListings.mockResolvedValue([
+      makeListing({
+        mic: "CRYPTO",
+        currency: "EUR",
+        providerSymbol: "bitcoin",
+      }),
+    ]);
+    cgFetchQuote.mockResolvedValue({ close: 51000, fetchedAt: "2026-05-12T00:00:00.000Z" });
+
+    const result = await refreshPrices({ force: true });
+
+    expect(result.refreshed).toBe(1);
+    expect(result.failed).toEqual([]);
+    expect(cgSearchListings).toHaveBeenCalledWith("BTC");
+    expect(cgFetchQuote).toHaveBeenCalledWith("bitcoin");
+    expect(searchListings).not.toHaveBeenCalled();
+    expect(fetchQuote).not.toHaveBeenCalled();
+    expect(sb.updates[0]!.payload).toMatchObject({
+      preferred_mic: "CRYPTO",
+      preferred_currency: "EUR",
+      currency: "EUR",
+      provider: "coingecko",
+      provider_symbol: "bitcoin",
+    });
+    expect(sb.updates[1]!.payload).toMatchObject({ current_price: 51000 });
+  });
+
+  it("rejects a non-crypto instrument without ISIN", async () => {
+    const inst = makeInstrument({
+      isin: null,
+      symbol: null,
+      asset_class: "equity",
+      preferred_mic: null,
+    });
+    const sb = makeSupabase({ instruments: [inst] });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const result = await refreshPrices({ force: true });
+
+    expect(result.refreshed).toBe(0);
+    expect(result.failed).toContain("Test Instrument");
+    expect(searchListings).not.toHaveBeenCalled();
+    expect(cgSearchListings).not.toHaveBeenCalled();
   });
 
   it("does not apply the divergence guard when current_price is null", async () => {

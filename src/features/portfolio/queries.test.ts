@@ -15,6 +15,20 @@ import { getOrders } from "./queries";
 
 const ACC_PERSO = "11111111-1111-1111-1111-111111111111";
 
+type InstrumentJoin = {
+  id: string;
+  isin: string | null;
+  symbol: string | null;
+  name: string;
+  asset_class: string;
+  currency: string;
+  preferred_mic: string | null;
+  preferred_currency: string | null;
+  bond_coupon_rate: number | null;
+  bond_maturity_date: string | null;
+  bond_coupon_frequency: number | null;
+};
+
 type TxRow = {
   id: string;
   kind: string;
@@ -31,7 +45,8 @@ type TxRow = {
   execution_venue: string | null;
   broker: string | null;
   support: string;
-  instrument: null;
+  convert_pair_id: string | null;
+  instrument: InstrumentJoin | null;
 };
 
 function row(id: string, overrides: Partial<TxRow> = {}): TxRow {
@@ -51,7 +66,25 @@ function row(id: string, overrides: Partial<TxRow> = {}): TxRow {
     execution_venue: null,
     broker: "Manual",
     support: "CTO",
+    convert_pair_id: null,
     instrument: null,
+    ...overrides,
+  };
+}
+
+function cryptoInstrument(overrides: Partial<InstrumentJoin> = {}): InstrumentJoin {
+  return {
+    id: "inst-btc",
+    isin: null,
+    symbol: "BTC",
+    name: "BTC",
+    asset_class: "crypto",
+    currency: "EUR",
+    preferred_mic: null,
+    preferred_currency: "EUR",
+    bond_coupon_rate: null,
+    bond_maturity_date: null,
+    bond_coupon_frequency: null,
     ...overrides,
   };
 }
@@ -125,5 +158,70 @@ describe("getOrders", () => {
     expect(sb.filters.accountId).toBe(ACC_PERSO);
     // getActiveAccount must not be consulted when the caller provides a scope.
     expect(getActiveAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces convert_pair_id from the transactions row", async () => {
+    const pairId = "11111111-2222-3333-4444-555555555555";
+    const sb = makeSupabase([
+      row("ALL-aaaa-001", {
+        kind: "buy",
+        quantity: 1,
+        price: 50000,
+        gross_amount: 50000,
+        broker: "Coinbase",
+        support: "CRYPTO",
+        convert_pair_id: pairId,
+        instrument: cryptoInstrument(),
+      }),
+    ]);
+    createClientMock.mockResolvedValue(sb as never);
+    getActiveAccountMock.mockResolvedValue("ALL");
+
+    const orders = await getOrders();
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.convertPairId).toBe(pairId);
+  });
+
+  it("surfaces instrumentSymbol from the joined instruments row", async () => {
+    const sb = makeSupabase([
+      row("ALL-aaaa-001", {
+        kind: "buy",
+        quantity: 1,
+        price: 50000,
+        gross_amount: 50000,
+        broker: "Coinbase",
+        support: "CRYPTO",
+        instrument: cryptoInstrument({ symbol: "ETH", name: "Ethereum", id: "inst-eth" }),
+      }),
+    ]);
+    createClientMock.mockResolvedValue(sb as never);
+    getActiveAccountMock.mockResolvedValue("ALL");
+
+    const orders = await getOrders();
+    expect(orders[0]!.instrumentSymbol).toBe("ETH");
+    expect(orders[0]!.instrumentId).toBe("inst-eth");
+  });
+
+  it("accepts crypto rows without ISIN (empty isin string surfaces, symbol carries identity)", async () => {
+    const sb = makeSupabase([
+      row("ALL-aaaa-001", {
+        kind: "buy",
+        quantity: 1,
+        price: 50000,
+        gross_amount: 50000,
+        broker: "Coinbase",
+        support: "CRYPTO",
+        instrument: cryptoInstrument({ isin: null }),
+      }),
+    ]);
+    createClientMock.mockResolvedValue(sb as never);
+    getActiveAccountMock.mockResolvedValue("ALL");
+
+    const orders = await getOrders();
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.isin).toBe("");
+    expect(orders[0]!.instrumentSymbol).toBe("BTC");
+    expect(orders[0]!.instrumentId).toBe("inst-btc");
+    expect(orders[0]!.assetClass).toBe("crypto");
   });
 });
