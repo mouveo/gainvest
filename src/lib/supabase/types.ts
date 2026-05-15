@@ -67,6 +67,33 @@ export type Database = {
         }
         Relationships: []
       }
+      crypto_prices_daily: {
+        Row: {
+          currency: string
+          date: string
+          fetched_at: string
+          price_eur: number
+          provider_symbol: string
+          source: string
+        }
+        Insert: {
+          currency?: string
+          date: string
+          fetched_at?: string
+          price_eur: number
+          provider_symbol: string
+          source?: string
+        }
+        Update: {
+          currency?: string
+          date?: string
+          fetched_at?: string
+          price_eur?: number
+          provider_symbol?: string
+          source?: string
+        }
+        Relationships: []
+      }
       fx_rates: {
         Row: {
           currency: string
