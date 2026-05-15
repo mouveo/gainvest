@@ -187,6 +187,7 @@ export type Database = {
         Row: {
           account_id: string
           broker: string | null
+          convert_pair_id: string | null
           created_at: string
           currency: string
           execution_venue: string | null
@@ -211,6 +212,7 @@ export type Database = {
         Insert: {
           account_id: string
           broker?: string | null
+          convert_pair_id?: string | null
           created_at?: string
           currency?: string
           execution_venue?: string | null
@@ -235,6 +237,7 @@ export type Database = {
         Update: {
           account_id?: string
           broker?: string | null
+          convert_pair_id?: string | null
           created_at?: string
           currency?: string
           execution_venue?: string | null

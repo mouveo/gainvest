@@ -8,6 +8,8 @@ const CLASS: Record<Support, string> = {
   "PEA-PME":
     "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-900",
   AV: "bg-success/10 text-success border-success/30",
+  CRYPTO:
+    "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
 };
 
 export function SupportTag({ support, className }: { support: Support; className?: string }) {

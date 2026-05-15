@@ -27,7 +27,7 @@ export type AccountType = NonNullable<Account["type"]>;
 export type AssetClass = NonNullable<Instrument["asset_class"]>;
 export type TransactionKind = NonNullable<Transaction["kind"]>;
 
-export const SUPPORTS = ["CTO", "PEA", "PEA-PME", "AV"] as const;
+export const SUPPORTS = ["CTO", "PEA", "PEA-PME", "AV", "CRYPTO"] as const;
 export type Support = (typeof SUPPORTS)[number];
 
 export type { Enums };
