@@ -12,6 +12,19 @@ vi.mock("@/lib/openfigi", () => ({
   lookupIsin: vi.fn(),
 }));
 
+vi.mock("@/lib/quotes", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/quotes")>("@/lib/quotes");
+  return {
+    ...actual,
+    coingeckoProvider: {
+      name: "coingecko",
+      searchListings: vi.fn(),
+      fetchQuote: vi.fn(),
+      fetchFxToEur: vi.fn(),
+    },
+  };
+});
+
 vi.mock("@/features/accounts/active", () => ({
   getActiveAccount: vi.fn(async () => "acc-1"),
   resolveWritableAccountId: vi.fn(async (override?: string | null) =>
@@ -22,6 +35,7 @@ vi.mock("@/features/accounts/active", () => ({
 }));
 
 import { lookupIsin } from "@/lib/openfigi";
+import { coingeckoProvider } from "@/lib/quotes";
 import { createClient } from "@/lib/supabase/server";
 
 import type { ParsedRow } from "../brokers/types";
@@ -30,7 +44,8 @@ import { importBrokerOrders } from "./actions";
 
 type InstrumentRow = {
   id: string;
-  isin: string;
+  isin: string | null;
+  symbol?: string | null;
   name: string;
   asset_class: string;
   currency: string;
@@ -39,20 +54,25 @@ type InstrumentRow = {
   bond_coupon_frequency?: number | null;
   preferred_mic?: string | null;
   preferred_currency?: string | null;
+  provider?: string | null;
+  provider_symbol?: string | null;
 };
 
 type UpsertCall = { payload: Record<string, unknown>; opts: unknown };
 type UpdateCall = { id: string; patch: Record<string, unknown> };
 type InsertedTx = Record<string, unknown>;
+type InstrumentInsertCall = { payload: Record<string, unknown> };
 
 function makeSupabase(opts: {
   existingInstruments?: InstrumentRow[];
   insertedInstrument?: (payload: Record<string, unknown>) => InstrumentRow | null;
   updatedInstrument?: (id: string, patch: Record<string, unknown>) => InstrumentRow | null;
+  insertedCryptoInstrument?: (payload: Record<string, unknown>) => InstrumentRow | null;
 }) {
   const upserts: UpsertCall[] = [];
   const updates: UpdateCall[] = [];
   const insertedTx: InsertedTx[] = [];
+  const cryptoInserts: InstrumentInsertCall[] = [];
   let existing: InstrumentRow[] = (opts.existingInstruments ?? []).slice();
 
   const client = {
@@ -74,14 +94,39 @@ function makeSupabase(opts: {
       if (table === "instruments") {
         return {
           select: (_cols: string) => ({
-            in: async (_col: string, isins: string[]) => ({
-              data: existing.filter((e) => isins.includes(e.isin)),
+            // ISIN-keyed read: .in("isin", [...]).
+            in: async (col: string, isins: string[]) => ({
+              data: existing.filter((e) =>
+                col === "isin" ? e.isin && isins.includes(e.isin) : false,
+              ),
               error: null,
+            }),
+            // Crypto read: .eq("asset_class","crypto").in("symbol", [...]).
+            eq: (_col: string, assetClass: string) => ({
+              in: async (_symCol: string, symbols: string[]) => ({
+                data: existing.filter(
+                  (e) =>
+                    e.asset_class === assetClass &&
+                    (e as { symbol?: string | null }).symbol != null &&
+                    symbols.includes((e as { symbol?: string | null }).symbol as string),
+                ),
+                error: null,
+              }),
             }),
           }),
           upsert: (payload: Record<string, unknown>, upsertOpts: unknown) => {
             upserts.push({ payload, opts: upsertOpts });
             const created = opts.insertedInstrument?.(payload) ?? null;
+            return {
+              select: () => ({
+                single: async () => ({ data: created, error: created ? null : { message: "no row" } }),
+              }),
+            };
+          },
+          insert: (payload: Record<string, unknown>) => {
+            cryptoInserts.push({ payload });
+            const created = opts.insertedCryptoInstrument?.(payload) ?? null;
+            if (created) existing.push(created);
             return {
               select: () => ({
                 single: async () => ({ data: created, error: created ? null : { message: "no row" } }),
@@ -132,15 +177,19 @@ function makeSupabase(opts: {
     }),
   };
 
-  return { client, upserts, updates, insertedTx, getExisting: () => existing };
+  return { client, upserts, updates, insertedTx, cryptoInserts, getExisting: () => existing };
 }
 
 const createClientMock = vi.mocked(createClient);
 const lookupIsinMock = vi.mocked(lookupIsin);
+const cgSearchListings = coingeckoProvider.searchListings as ReturnType<typeof vi.fn>;
+const cgFetchQuote = coingeckoProvider.fetchQuote as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   createClientMock.mockReset();
   lookupIsinMock.mockReset();
+  cgSearchListings.mockReset();
+  cgFetchQuote.mockReset();
 });
 
 afterEach(() => {
@@ -557,5 +606,208 @@ describe("importBrokerOrders — bond metadata persistence", () => {
     expect(sb.updates).toHaveLength(0);
     expect(sb.upserts).toHaveLength(0);
     expect(sb.insertedTx).toHaveLength(1);
+  });
+});
+
+function cryptoBuyRow(overrides: Partial<ParsedRow> = {}): ParsedRow {
+  return {
+    rawLine: 1,
+    date: "2024-03-12",
+    kind: "buy",
+    isin: null,
+    description: "Buy",
+    quantity: 0.5,
+    totalAmount: 30100,
+    grossAmount: 30000,
+    price: 60000,
+    needsAttention: false,
+    symbol: "BTC",
+    name: "BTC",
+    currency: "EUR",
+    fees: 100,
+    fxRate: 1,
+    broker: "Coinbase",
+    assetClass: "crypto",
+    ...overrides,
+  };
+}
+
+describe("importBrokerOrders — crypto without ISIN", () => {
+  it("imports a crypto buy row without ISIN, resolves the instrument via CoinGecko and skips OpenFIGI", async () => {
+    cgSearchListings.mockResolvedValue([
+      {
+        mic: "CRYPTO",
+        currency: "EUR",
+        exchangeName: "COINGECKO",
+        providerSymbol: "bitcoin",
+        country: "",
+        previousClose: null,
+      },
+    ]);
+    const sb = makeSupabase({
+      existingInstruments: [],
+      insertedCryptoInstrument: (payload) => ({
+        id: "inst-btc",
+        isin: null,
+        symbol: payload.symbol as string,
+        name: payload.name as string,
+        asset_class: payload.asset_class as string,
+        currency: payload.currency as string,
+      }),
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const result = await importBrokerOrders("coinbase", "CRYPTO", [cryptoBuyRow()]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inserted).toBe(1);
+    expect(lookupIsinMock).not.toHaveBeenCalled();
+    expect(cgSearchListings).toHaveBeenCalledWith("BTC");
+
+    // Instrument creation went via .insert (crypto path), not .upsert.
+    expect(sb.cryptoInserts).toHaveLength(1);
+    expect(sb.upserts).toHaveLength(0);
+    expect(sb.cryptoInserts[0]!.payload).toMatchObject({
+      isin: null,
+      symbol: "BTC",
+      asset_class: "crypto",
+      currency: "EUR",
+      provider: "coingecko",
+      provider_symbol: "bitcoin",
+      preferred_currency: "EUR",
+      preferred_mic: null,
+    });
+
+    expect(sb.insertedTx).toHaveLength(1);
+    expect(sb.insertedTx[0]!.instrument_id).toBe("inst-btc");
+  });
+
+  it("reuses an existing crypto instrument keyed on (symbol, asset_class=crypto) without calling CoinGecko", async () => {
+    const sb = makeSupabase({
+      existingInstruments: [
+        {
+          id: "inst-eth",
+          isin: null,
+          symbol: "ETH",
+          name: "ETH",
+          asset_class: "crypto",
+          currency: "EUR",
+        },
+      ],
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const result = await importBrokerOrders("coinbase", "CRYPTO", [
+      cryptoBuyRow({ symbol: "ETH", name: "ETH" }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(cgSearchListings).not.toHaveBeenCalled();
+    expect(sb.cryptoInserts).toHaveLength(0);
+    expect(sb.insertedTx).toHaveLength(1);
+    expect(sb.insertedTx[0]!.instrument_id).toBe("inst-eth");
+  });
+
+  it("propagates convert_pair_id from both legs of a Coinbase Convert", async () => {
+    cgSearchListings.mockImplementation(async (sym: string) => [
+      {
+        mic: "CRYPTO",
+        currency: "EUR",
+        exchangeName: "COINGECKO",
+        providerSymbol: sym === "BTC" ? "bitcoin" : "ethereum",
+        country: "",
+        previousClose: null,
+      },
+    ]);
+    let nextId = 1;
+    const sb = makeSupabase({
+      existingInstruments: [],
+      insertedCryptoInstrument: (payload) => ({
+        id: `inst-${(payload.symbol as string).toLowerCase()}-${nextId++}`,
+        isin: null,
+        symbol: payload.symbol as string,
+        name: payload.name as string,
+        asset_class: payload.asset_class as string,
+        currency: payload.currency as string,
+      }),
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const pairId = "11111111-2222-3333-4444-555555555555";
+    const result = await importBrokerOrders("coinbase", "CRYPTO", [
+      cryptoBuyRow({
+        rawLine: 1,
+        kind: "sell",
+        symbol: "BTC",
+        name: "BTC",
+        convertPairId: pairId,
+      }),
+      cryptoBuyRow({
+        rawLine: 2,
+        kind: "buy",
+        symbol: "ETH",
+        name: "ETH",
+        quantity: 1.5,
+        price: 4000,
+        grossAmount: 6000,
+        totalAmount: 6000,
+        fees: 0,
+        convertPairId: pairId,
+      }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(sb.insertedTx).toHaveLength(2);
+    expect(sb.insertedTx[0]!.convert_pair_id).toBe(pairId);
+    expect(sb.insertedTx[1]!.convert_pair_id).toBe(pairId);
+  });
+
+  it("fails the row when CoinGecko has no match for the crypto symbol", async () => {
+    cgSearchListings.mockResolvedValue([]);
+    const sb = makeSupabase({ existingInstruments: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const result = await importBrokerOrders("coinbase", "CRYPTO", [
+      cryptoBuyRow({ symbol: "MYSTERYCOIN", name: "MYSTERYCOIN" }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inserted).toBe(0);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]!.reason).toMatch(/CoinGecko/);
+    expect(sb.insertedTx).toHaveLength(0);
+  });
+
+  it("rejects a non-crypto buy without ISIN", async () => {
+    const sb = makeSupabase({ existingInstruments: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const equityRow: ParsedRow = {
+      rawLine: 1,
+      date: "2024-03-12",
+      kind: "buy",
+      isin: null,
+      description: "Mystery equity",
+      quantity: 1,
+      totalAmount: 100,
+      grossAmount: 100,
+      price: 100,
+      needsAttention: false,
+      symbol: "X",
+      currency: "EUR",
+      broker: "Bourse Direct",
+      assetClass: "equity",
+    };
+
+    const result = await importBrokerOrders("bourse-direct", "CTO", [equityRow]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.inserted).toBe(0);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]!.reason).toMatch(/ISIN obligatoire/);
+    expect(cgSearchListings).not.toHaveBeenCalled();
   });
 });
