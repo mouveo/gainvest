@@ -42,6 +42,7 @@ const BROKERS = [
   "Boursorama",
   "Degiro",
   "Interactive Brokers",
+  "Coinbase",
 ];
 
 const ASSET_CLASSES: { value: string; label: string }[] = [
@@ -119,6 +120,7 @@ export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Prop
   const isCalibrate = mode === "calibrate";
 
   const [isin, setIsin] = useState("");
+  const [symbol, setSymbol] = useState("");
   const [name, setName] = useState("");
   const [assetClass, setAssetClass] = useState<string>("etf");
   const [currency, setCurrency] = useState<string>("EUR");
@@ -132,6 +134,20 @@ export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Prop
   const [executionVenue, setExecutionVenue] = useState("");
   const [broker, setBroker] = useState("Bourse Direct");
   const [support, setSupport] = useState<Support>("CTO");
+  const isCrypto = support === "CRYPTO" || assetClass === "crypto";
+
+  // CRYPTO support → crypto assetClass + EUR currency, both locked.
+  useEffect(() => {
+    if (support !== "CRYPTO") return;
+    if (assetClass !== "crypto") setAssetClass("crypto");
+    if (currency !== "EUR") setCurrency("EUR");
+  }, [support, assetClass, currency]);
+
+  // Pure crypto assetClass picked manually → still force EUR.
+  useEffect(() => {
+    if (assetClass !== "crypto") return;
+    if (currency !== "EUR") setCurrency("EUR");
+  }, [assetClass, currency]);
   const [notes, setNotes] = useState("");
   const [listing, setListing] = useState<SelectedListing>(null);
   const [error, setError] = useState<string | null>(null);
@@ -221,6 +237,7 @@ export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Prop
   const reset = () => {
     setMode("buy");
     setIsin("");
+    setSymbol("");
     setName("");
     setAssetClass("etf");
     setCurrency("EUR");
@@ -384,6 +401,9 @@ export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Prop
             <TradableFields
               isin={isin}
               setIsin={setIsin}
+              symbol={symbol}
+              setSymbol={setSymbol}
+              isCrypto={isCrypto}
               isinDatalistId={isinDatalistId}
               knownIsins={knownIsins}
               runLookup={runLookup}
@@ -473,6 +493,9 @@ export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Prop
 type TradableProps = {
   isin: string;
   setIsin: (v: string) => void;
+  symbol: string;
+  setSymbol: (v: string) => void;
+  isCrypto: boolean;
   isinDatalistId: string;
   knownIsins: { isin: string; name: string }[];
   runLookup: (v: string) => void;
@@ -513,32 +536,50 @@ type TradableProps = {
 function TradableFields(props: TradableProps) {
   return (
     <>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="isin">ISIN</Label>
-        <Input
-          id="isin"
-          name="isin"
-          list={props.isinDatalistId}
-          value={props.isin}
-          onChange={(e) => props.setIsin(e.target.value.toUpperCase())}
-          onBlur={(e) => props.runLookup(e.target.value)}
-          placeholder="IE00BF4RFH31"
-          className="font-mono"
-          required
-        />
-        <datalist id={props.isinDatalistId}>
-          {props.knownIsins.map((k) => (
-            <option key={k.isin} value={k.isin}>
-              {k.name}
-            </option>
-          ))}
-        </datalist>
-        {props.lookupPending ? (
-          <p className="text-muted-foreground text-xs">Recherche des métadonnées…</p>
-        ) : props.lookupError ? (
-          <p className="text-muted-foreground text-xs">{props.lookupError}</p>
-        ) : null}
-      </div>
+      {props.isCrypto ? (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="symbol">Symbole</Label>
+          <Input
+            id="symbol"
+            name="symbol"
+            value={props.symbol}
+            onChange={(e) => props.setSymbol(e.target.value.toUpperCase())}
+            placeholder="BTC"
+            className="font-mono"
+            required
+          />
+          <p className="text-muted-foreground text-xs">
+            Ticker CoinGecko (BTC, ETH, USDC…). L&apos;instrument est résolu au prochain refresh.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="isin">ISIN</Label>
+          <Input
+            id="isin"
+            name="isin"
+            list={props.isinDatalistId}
+            value={props.isin}
+            onChange={(e) => props.setIsin(e.target.value.toUpperCase())}
+            onBlur={(e) => props.runLookup(e.target.value)}
+            placeholder="IE00BF4RFH31"
+            className="font-mono"
+            required
+          />
+          <datalist id={props.isinDatalistId}>
+            {props.knownIsins.map((k) => (
+              <option key={k.isin} value={k.isin}>
+                {k.name}
+              </option>
+            ))}
+          </datalist>
+          {props.lookupPending ? (
+            <p className="text-muted-foreground text-xs">Recherche des métadonnées…</p>
+          ) : props.lookupError ? (
+            <p className="text-muted-foreground text-xs">{props.lookupError}</p>
+          ) : null}
+        </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="name">Nom de l&apos;instrument</Label>
@@ -673,7 +714,11 @@ function TradableFields(props: TradableProps) {
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="asset_class">Classe d&apos;actif</Label>
-          <Select value={props.assetClass} onValueChange={(v) => v && props.setAssetClass(v)}>
+          <Select
+            value={props.assetClass}
+            onValueChange={(v) => v && props.setAssetClass(v)}
+            disabled={props.isCrypto}
+          >
             <SelectTrigger id="asset_class">
               <SelectValue>
                 {(value: string) =>
@@ -693,24 +738,37 @@ function TradableFields(props: TradableProps) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="preferred_listing">Cotation</Label>
-        <OrderListingSelect
-          isin={props.isin}
-          value={props.listing}
-          onChange={props.setListing}
-        />
-        <p className="text-muted-foreground text-xs">
-          Auto = on choisit la meilleure cotation pour toi au prochain refresh.
-        </p>
-      </div>
+      {props.isCrypto ? (
+        <div className="flex flex-col gap-1.5">
+          <Label>Cotation</Label>
+          <div className="border-input bg-muted/30 text-muted-foreground rounded-lg border px-2.5 py-2 font-mono text-sm">
+            CoinGecko
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="preferred_listing">Cotation</Label>
+          <OrderListingSelect
+            isin={props.isin}
+            value={props.listing}
+            onChange={props.setListing}
+          />
+          <p className="text-muted-foreground text-xs">
+            Auto = on choisit la meilleure cotation pour toi au prochain refresh.
+          </p>
+        </div>
+      )}
 
       <input type="hidden" name="currency" value={props.currency} />
-      <input type="hidden" name="preferred_mic" value={props.listing?.mic ?? ""} />
+      <input
+        type="hidden"
+        name="preferred_mic"
+        value={props.isCrypto ? "" : (props.listing?.mic ?? "")}
+      />
       <input
         type="hidden"
         name="preferred_currency"
-        value={props.listing?.currency ?? ""}
+        value={props.isCrypto ? "" : (props.listing?.currency ?? "")}
       />
     </>
   );

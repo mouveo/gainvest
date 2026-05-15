@@ -231,6 +231,11 @@ export function PositionsTable({
               </div>
             );
           }
+          if (p.assetClass === "crypto") {
+            return (
+              <div className="text-right font-mono tabular-nums">{fmtNum(p.qty, 8)}</div>
+            );
+          }
           return <div className="text-right font-mono tabular-nums">{fmtInt(p.qty)}</div>;
         },
       },
@@ -294,6 +299,15 @@ export function PositionsTable({
         enableSorting: false,
         cell: ({ row }) => {
           const p = row.original;
+          // Crypto: CoinGecko is the only listing — surface a readonly badge
+          // instead of the picker (no exchange/MIC selection in V1).
+          if (p.assetClass === "crypto") {
+            return (
+              <Badge variant="outline" className="font-mono">
+                CoinGecko
+              </Badge>
+            );
+          }
           if (!p.instrumentId) {
             return <span className="text-muted-foreground text-xs">—</span>;
           }
@@ -610,7 +624,9 @@ function OrdersSubrow({ position }: { position: Position }) {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right font-mono tabular-nums">
-                  {fmtInt(o.quantity)}
+                  {position.assetClass === "crypto"
+                    ? fmtNum(o.quantity, 8)
+                    : fmtInt(o.quantity)}
                 </TableCell>
                 <TableCell className="text-right font-mono tabular-nums">
                   {priceCell.text}

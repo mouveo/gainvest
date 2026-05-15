@@ -17,7 +17,21 @@ vi.mock("@/features/accounts/active", () => ({
   ),
 }));
 
+vi.mock("@/lib/quotes", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/quotes")>("@/lib/quotes");
+  return {
+    ...actual,
+    coingeckoProvider: {
+      name: "coingecko",
+      searchListings: vi.fn(),
+      fetchQuote: vi.fn(),
+      fetchFxToEur: vi.fn(),
+    },
+  };
+});
+
 import { resolveWritableAccountId } from "@/features/accounts/active";
+import { coingeckoProvider } from "@/lib/quotes";
 import { createClient } from "@/lib/supabase/server";
 
 import { addOrder } from "./actions";
@@ -29,6 +43,7 @@ type FxRow = { currency: string; eur_rate: number };
 type ExistingInstrument = {
   id: string;
   symbol: string;
+  asset_class?: string;
   preferred_mic: string | null;
   preferred_currency: string | null;
 };
@@ -83,11 +98,18 @@ function makeSupabase(opts: {
         };
       }
       if (table === "instruments") {
-        // Lookup state for the addOrder select chain: select(cols).eq("symbol", x).is("mic", null).maybeSingle()
-        const lookup: { symbol?: string; micIsNull?: boolean } = {};
+        // Lookup state captures all .eq() and .is() filters so we can resolve
+        // both the legacy ETF chain (symbol + mic IS NULL) and the new crypto
+        // chain (symbol + asset_class = crypto).
+        const lookup: {
+          symbol?: string;
+          assetClass?: string;
+          micIsNull?: boolean;
+        } = {};
         const selectBuilder = {
           eq: vi.fn((col: string, val: string) => {
             if (col === "symbol") lookup.symbol = val;
+            if (col === "asset_class") lookup.assetClass = val;
             return selectBuilder;
           }),
           is: vi.fn((col: string, val: unknown) => {
@@ -96,7 +118,11 @@ function makeSupabase(opts: {
           }),
           maybeSingle: vi.fn(async () => {
             if (!lookup.symbol) return { data: null, error: null };
-            const row = existing.find((e) => e.symbol === lookup.symbol);
+            const row = existing.find(
+              (e) =>
+                e.symbol === lookup.symbol &&
+                (lookup.assetClass == null || e.asset_class === lookup.assetClass),
+            );
             return { data: row ?? null, error: null };
           }),
         };
@@ -108,6 +134,7 @@ function makeSupabase(opts: {
             const inserted: ExistingInstrument = {
               id: instrumentId,
               symbol: String(payload.symbol ?? ""),
+              asset_class: payload.asset_class as string | undefined,
               preferred_mic: (payload.preferred_mic as string | undefined) ?? null,
               preferred_currency: (payload.preferred_currency as string | undefined) ?? null,
             };
@@ -572,5 +599,175 @@ describe("addOrder — account scope", () => {
     const ins = sb.inserts[0]!.payload as Record<string, unknown>;
     expect(ins.account_id).toBe("11111111-1111-1111-1111-111111111111");
     expect(resolveMock).toHaveBeenCalledWith("11111111-1111-1111-1111-111111111111");
+  });
+});
+
+const cgSearchListings = coingeckoProvider.searchListings as ReturnType<typeof vi.fn>;
+
+describe("addOrder — crypto (manual order without ISIN)", () => {
+  beforeEach(() => {
+    cgSearchListings.mockReset();
+  });
+
+  it("accepts a CRYPTO buy without ISIN when the symbol is supplied, and resolves via CoinGecko", async () => {
+    cgSearchListings.mockResolvedValue([
+      {
+        mic: "CRYPTO",
+        currency: "EUR",
+        exchangeName: "COINGECKO",
+        providerSymbol: "bitcoin",
+        country: "",
+        previousClose: null,
+      },
+    ]);
+    const sb = makeSupabase({ existingInstruments: [], instrumentId: "inst-btc" });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        symbol: "BTC",
+        name: "BTC",
+        quantity: "0.5",
+        price: "60000",
+        gross_amount: "30000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Coinbase",
+        support: "CRYPTO",
+        currency: "EUR",
+        asset_class: "crypto",
+      }),
+    );
+
+    expect(r.ok).toBe(true);
+    expect(cgSearchListings).toHaveBeenCalledWith("BTC");
+    expect(sb.instrumentInserts).toHaveLength(1);
+    const payload = sb.instrumentInserts[0]!.payload as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      isin: null,
+      symbol: "BTC",
+      asset_class: "crypto",
+      currency: "EUR",
+      provider: "coingecko",
+      provider_symbol: "bitcoin",
+      preferred_mic: null,
+      preferred_currency: "EUR",
+    });
+    expect(sb.inserts).toHaveLength(1);
+    const ins = sb.inserts[0]!.payload as Record<string, unknown>;
+    expect(ins.instrument_id).toBe("inst-btc");
+    expect(ins.support).toBe("CRYPTO");
+  });
+
+  it("reuses an existing crypto instrument keyed on (symbol, asset_class=crypto) without a CoinGecko call", async () => {
+    const sb = makeSupabase({
+      existingInstruments: [
+        {
+          id: "inst-eth",
+          symbol: "ETH",
+          asset_class: "crypto",
+          preferred_mic: null,
+          preferred_currency: "EUR",
+        },
+      ],
+      instrumentId: "inst-eth",
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        symbol: "ETH",
+        name: "ETH",
+        quantity: "1",
+        price: "3000",
+        gross_amount: "3000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Coinbase",
+        support: "CRYPTO",
+        currency: "EUR",
+        asset_class: "crypto",
+      }),
+    );
+
+    expect(r.ok).toBe(true);
+    expect(cgSearchListings).not.toHaveBeenCalled();
+    expect(sb.instrumentInserts).toHaveLength(0);
+    expect(sb.inserts).toHaveLength(1);
+    const ins = sb.inserts[0]!.payload as Record<string, unknown>;
+    expect(ins.instrument_id).toBe("inst-eth");
+  });
+
+  it("rejects a crypto order without a symbol", async () => {
+    const sb = makeSupabase({});
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        name: "BTC",
+        quantity: "0.5",
+        price: "60000",
+        gross_amount: "30000",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Coinbase",
+        support: "CRYPTO",
+        currency: "EUR",
+        asset_class: "crypto",
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Symbole crypto/);
+    expect(cgSearchListings).not.toHaveBeenCalled();
+  });
+
+  it("rejects a crypto order whose symbol is unknown to CoinGecko", async () => {
+    cgSearchListings.mockResolvedValue([]);
+    const sb = makeSupabase({ existingInstruments: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        symbol: "MYSTERYCOIN",
+        name: "MYSTERYCOIN",
+        quantity: "1",
+        price: "1",
+        gross_amount: "1",
+        fees: "0",
+        trade_date: "2025-01-01",
+        broker: "Coinbase",
+        support: "CRYPTO",
+        currency: "EUR",
+        asset_class: "crypto",
+      }),
+    );
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/CoinGecko/);
+    expect(sb.instrumentInserts).toHaveLength(0);
+    expect(sb.inserts).toHaveLength(0);
+  });
+
+  it("still rejects a non-crypto buy without ISIN", async () => {
+    const sb = makeSupabase({});
+    createClientMock.mockResolvedValue(sb.client as never);
+    const r = await addOrder(
+      form({
+        kind: "buy",
+        name: "Test",
+        quantity: "10",
+        price: "100",
+        trade_date: "2025-01-01",
+        broker: "Bourse Direct",
+        support: "CTO",
+        currency: "EUR",
+        asset_class: "etf",
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/ISIN/i);
   });
 });

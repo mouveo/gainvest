@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  coingeckoProvider,
   type Listing,
   pickPreferredListing,
   pickProviderFor,
@@ -57,6 +58,9 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const isin = String(formData.get("isin") ?? "")
     .trim()
     .toUpperCase();
+  const symbol = String(formData.get("symbol") ?? "")
+    .trim()
+    .toUpperCase();
   const name = String(formData.get("name") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "buy");
   if (!ADD_ORDER_KINDS.includes(kindRaw as AddOrderKind)) {
@@ -94,11 +98,19 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
 
   const support = supportRaw as Support;
   const isCashKind = kind !== "buy" && kind !== "sell";
+  // Crypto branch: support=CRYPTO or asset_class=crypto. ISIN is not required
+  // — the symbol field carries identity and the instrument is resolved via
+  // CoinGecko (same path as the Coinbase importer, LOT 3).
+  const isCryptoOrder = !isCashKind && (support === "CRYPTO" || assetClass === "crypto");
 
   if (!tradeDate) return { ok: false, error: "La date d'exécution est requise." };
 
   if (!isCashKind) {
-    if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
+    if (isCryptoOrder) {
+      if (!symbol) return { ok: false, error: "Symbole crypto requis." };
+    } else {
+      if (!ISIN_RE.test(isin)) return { ok: false, error: "ISIN invalide." };
+    }
     if (!name) return { ok: false, error: "Le nom de l'instrument est requis." };
     if (quantity <= 0) return { ok: false, error: "La quantité doit être > 0." };
     if (price <= 0) return { ok: false, error: "Le cours doit être > 0." };
@@ -125,7 +137,49 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const accountId = resolved.accountId;
 
   let instrumentId: string | null = null;
-  if (!isCashKind) {
+  if (isCryptoOrder) {
+    // Crypto: lookup by (symbol, asset_class='crypto'). No OpenFIGI; if absent
+    // locally, resolve via CoinGecko and create with provider/provider_symbol
+    // pre-filled so refreshPrices can quote immediately.
+    const { data: existing, error: existErr } = await supabase
+      .from("instruments")
+      .select("id")
+      .eq("symbol", symbol)
+      .eq("asset_class", "crypto")
+      .maybeSingle();
+    if (existErr) return { ok: false, error: existErr.message };
+    if (existing) {
+      instrumentId = existing.id;
+    } else {
+      const listings = await coingeckoProvider.searchListings(symbol);
+      const chosen = listings[0] ?? null;
+      if (!chosen) {
+        return {
+          ok: false,
+          error: `Symbole crypto "${symbol}" introuvable sur CoinGecko.`,
+        };
+      }
+      const { data: inserted, error: insErr } = await supabase
+        .from("instruments")
+        .insert({
+          isin: null,
+          symbol,
+          mic: null,
+          name: name || symbol,
+          asset_class: "crypto",
+          currency: "EUR",
+          country: null,
+          provider: "coingecko",
+          provider_symbol: chosen.providerSymbol,
+          preferred_mic: null,
+          preferred_currency: "EUR",
+        })
+        .select("id")
+        .single();
+      if (insErr) return { ok: false, error: insErr.message };
+      instrumentId = inserted.id;
+    }
+  } else if (!isCashKind) {
     // Find the existing catalog row keyed on (symbol = isin, mic IS NULL).
     // We deliberately avoid upsert on `symbol,mic` here: an upsert that
     // includes `preferred_mic` would overwrite a user's previously locked
