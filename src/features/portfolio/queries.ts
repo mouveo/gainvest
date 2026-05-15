@@ -1,5 +1,7 @@
 import "server-only";
 
+import { getActiveAccount } from "@/features/accounts/active";
+import { ALL_ACCOUNTS, type ActiveAccount } from "@/features/accounts/constants";
 import { createClient } from "@/lib/supabase/server";
 
 import {
@@ -29,9 +31,10 @@ const UI_KINDS = new Set([
   "withdrawal",
 ]);
 
-export async function getOrders(): Promise<OrderRow[]> {
+export async function getOrders(active?: ActiveAccount): Promise<OrderRow[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  const scope = active ?? (await getActiveAccount());
+  let query = supabase
     .from("transactions")
     .select(
       `
@@ -63,8 +66,11 @@ export async function getOrders(): Promise<OrderRow[]> {
           bond_coupon_frequency
         )
       `,
-    )
-    .order("trade_date", { ascending: false });
+    );
+  if (scope !== ALL_ACCOUNTS) {
+    query = query.eq("account_id", scope);
+  }
+  const { data, error } = await query.order("trade_date", { ascending: false });
 
   if (error) throw error;
   if (!data) return [];
@@ -263,14 +269,15 @@ async function getFxRates(orders: OrderRow[]): Promise<Record<string, number>> {
   return out;
 }
 
-export async function getPositions(): Promise<{
+export async function getPositions(active?: ActiveAccount): Promise<{
   orders: OrderRow[];
   positions: Position[];
   realizations: PastRealization[];
   priceByIsin: Record<string, CurrentPrice>;
   pricesUpdatedAt: string | null;
 }> {
-  const orders = await getOrders();
+  const scope = active ?? (await getActiveAccount());
+  const orders = await getOrders(scope);
   const priceByIsin = await getCurrentPrices(orders);
   const pricesUpdatedAt = await getPricesUpdatedAt(orders);
   const fxByCurrency = await getFxRates(orders);
@@ -283,33 +290,3 @@ export async function getPositions(): Promise<{
   return { orders, positions, realizations, priceByIsin, pricesUpdatedAt };
 }
 
-/**
- * Returns the user's default account id (created by the on_auth_user_created
- * trigger; the helper exists as a safety net for legacy users).
- */
-export async function getDefaultAccountId(): Promise<string> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
-
-  const { data, error } = await supabase
-    .from("accounts")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (data) return data.id;
-
-  // Should not happen — trigger creates one at signup — but be safe.
-  const { data: created, error: insertErr } = await supabase
-    .from("accounts")
-    .insert({ user_id: user.id, name: "Portefeuille", type: "cto", currency: "EUR" })
-    .select("id")
-    .single();
-  if (insertErr) throw insertErr;
-  return created.id;
-}

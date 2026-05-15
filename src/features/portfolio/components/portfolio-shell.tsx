@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import type { ActiveAccount } from "@/features/accounts/constants";
+import type { Account } from "@/features/accounts/queries";
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
@@ -32,6 +35,8 @@ type Props = {
   realizations: PastRealization[];
   priceByIsin: Record<string, CurrentPrice>;
   pricesUpdatedAt: string | null;
+  accounts: Account[];
+  activeAccount: ActiveAccount;
 };
 
 export function PortfolioShell({
@@ -40,6 +45,8 @@ export function PortfolioShell({
   realizations,
   priceByIsin,
   pricesUpdatedAt,
+  accounts,
+  activeAccount,
 }: Props) {
   const [tab, setTab] = useState<Tab>("positions");
   const [withDividends, setWithDividends] = usePnlMode();
@@ -93,8 +100,12 @@ export function PortfolioShell({
         </div>
         <div className="flex items-center gap-2">
           <RefreshPricesButton />
-          <ImportSheet />
-          <AddOrderSheet knownIsins={knownIsins} />
+          <ImportSheet accounts={accounts} activeAccount={activeAccount} />
+          <AddOrderSheet
+            knownIsins={knownIsins}
+            accounts={accounts}
+            activeAccount={activeAccount}
+          />
         </div>
       </div>
 

@@ -3,6 +3,9 @@
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import { ALL_ACCOUNTS, type ActiveAccount } from "@/features/accounts/constants";
+import type { Account } from "@/features/accounts/queries";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -93,9 +96,23 @@ const ASSET_CLASS_VALUES = new Set(["etf", "equity", "fund", "bond", "crypto"]);
 
 type Props = {
   knownIsins?: { isin: string; name: string }[];
+  accounts: Account[];
+  activeAccount: ActiveAccount;
 };
 
-export function AddOrderSheet({ knownIsins = [] }: Props) {
+export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Props) {
+  const needsTargetPick = activeAccount === ALL_ACCOUNTS;
+  const [accountTarget, setAccountTarget] = useState<string>(
+    needsTargetPick ? "" : (activeAccount as string),
+  );
+  const accountById = useMemo(
+    () => new Map(accounts.map((a) => [a.id, a])),
+    [accounts],
+  );
+  const activeAccountName =
+    activeAccount !== ALL_ACCOUNTS
+      ? (accountById.get(activeAccount)?.name ?? activeAccount)
+      : null;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("buy");
   const isTradable = mode === "buy" || mode === "sell";
@@ -223,6 +240,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     setInfo(null);
     setLookupError(null);
     setLookupPending(false);
+    setAccountTarget(needsTargetPick ? "" : (activeAccount as string));
   };
 
   useEffect(() => {
@@ -234,6 +252,10 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     event.preventDefault();
     setError(null);
     setInfo(null);
+    if (needsTargetPick && !accountTarget) {
+      setError("Sélectionne un compte cible.");
+      return;
+    }
     if (isCalibrate) {
       startTransition(async () => {
         const result = await setCashBalance({
@@ -242,6 +264,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
           currency,
           amount: grossN,
           atDate: tradeDate,
+          accountId: accountTarget || null,
         });
         if (!result.ok) {
           setError(result.error);
@@ -263,6 +286,7 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
     formData.set("currency", currency);
     formData.set("support", support);
     formData.set("broker", broker);
+    formData.set("account_id", accountTarget);
     if (!isTradable) formData.set("asset_class", "cash");
     startTransition(async () => {
       const result = await addOrder(formData);
@@ -291,6 +315,33 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
           </SheetDescription>
         </SheetHeader>
         <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 px-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="account_target">Compte cible</Label>
+            {needsTargetPick ? (
+              <Select
+                value={accountTarget}
+                onValueChange={(v) => v && setAccountTarget(v)}
+              >
+                <SelectTrigger id="account_target" aria-invalid={!accountTarget}>
+                  <SelectValue placeholder="Choisis un compte…">
+                    {(v: string) => accountById.get(v)?.name ?? v}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((acc) => (
+                    <SelectItem key={acc.id} value={acc.id}>
+                      {acc.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="border-input bg-muted/30 text-muted-foreground rounded-lg border px-2.5 py-2 text-sm">
+                {activeAccountName}
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="mode">Type de mouvement</Label>
             <Select value={mode} onValueChange={(v) => v && setMode(v as Mode)}>
@@ -405,7 +456,10 @@ export function AddOrderSheet({ knownIsins = [] }: Props) {
 
           <SheetFooter>
             <SheetClose render={<Button type="button" variant="ghost" />}>Annuler</SheetClose>
-            <Button type="submit" disabled={pending}>
+            <Button
+              type="submit"
+              disabled={pending || (needsTargetPick && !accountTarget)}
+            >
               <Plus className="size-4" />
               {pending ? "Enregistrement…" : isCalibrate ? "Calibrer" : "Enregistrer"}
             </Button>

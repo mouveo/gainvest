@@ -3,6 +3,9 @@
 import { AlertTriangle, FileUp, Upload } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 
+import { ALL_ACCOUNTS, type ActiveAccount } from "@/features/accounts/constants";
+import type { Account } from "@/features/accounts/queries";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,7 +84,13 @@ const KIND_CLASS: Record<ParsedRow["kind"], string> = {
     "border-rose-300/40 bg-rose-50 text-rose-700 dark:border-rose-700/40 dark:bg-rose-950/30 dark:text-rose-300",
 };
 
-export function ImportSheet() {
+type Props = {
+  accounts: Account[];
+  activeAccount: ActiveAccount;
+};
+
+export function ImportSheet({ accounts, activeAccount }: Props) {
+  const needsTargetPick = activeAccount === ALL_ACCOUNTS;
   const [open, setOpen] = useState(false);
   const [brokerId, setBrokerId] = useState<string>("bourse-direct");
   const [support, setSupport] = useState<Support>("CTO");
@@ -95,6 +104,18 @@ export function ImportSheet() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPending, startResetTransition] = useTransition();
   const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [accountTarget, setAccountTarget] = useState<string>(
+    needsTargetPick ? "" : (activeAccount as string),
+  );
+
+  const accountById = useMemo(
+    () => new Map(accounts.map((a) => [a.id, a])),
+    [accounts],
+  );
+  const activeAccountName =
+    activeAccount !== ALL_ACCOUNTS
+      ? (accountById.get(activeAccount)?.name ?? activeAccount)
+      : null;
 
   const broker = getBroker(brokerId);
   const brokers = listBrokers();
@@ -164,8 +185,14 @@ export function ImportSheet() {
   const submit = () => {
     setError(null);
     setResult(null);
+    if (needsTargetPick && !accountTarget) {
+      setError("Sélectionne un compte cible.");
+      return;
+    }
     startTransition(async () => {
-      const res = await importBrokerOrders(brokerId, support, importable, warnings);
+      const res = await importBrokerOrders(brokerId, support, importable, warnings, {
+        accountId: accountTarget || null,
+      });
       setResult(res);
       if (!res.ok) setError(res.error);
     });
@@ -183,10 +210,14 @@ export function ImportSheet() {
 
   const onConfirmReset = () => {
     if (!broker) return;
+    if (needsTargetPick && !accountTarget) {
+      setResetMessage("Sélectionne un compte cible.");
+      return;
+    }
     const name = broker.name;
     setResetMessage(null);
     startResetTransition(async () => {
-      const res = await deleteTransactionsByBroker(name);
+      const res = await deleteTransactionsByBroker(name, accountTarget || undefined);
       if ("deleted" in res) {
         setResetMessage(
           `${res.deleted} transaction${res.deleted > 1 ? "s" : ""} ${name} supprimée${res.deleted > 1 ? "s" : ""}.`,
@@ -220,6 +251,36 @@ export function ImportSheet() {
         </SheetHeader>
 
         <div className="flex flex-1 flex-col gap-4 px-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="import-account-target">Compte cible</Label>
+            {needsTargetPick ? (
+              <Select
+                value={accountTarget}
+                onValueChange={(v) => v && setAccountTarget(v)}
+              >
+                <SelectTrigger
+                  id="import-account-target"
+                  aria-invalid={!accountTarget}
+                >
+                  <SelectValue placeholder="Choisis un compte…">
+                    {(v: string) => accountById.get(v)?.name ?? v}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((acc) => (
+                    <SelectItem key={acc.id} value={acc.id}>
+                      {acc.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="border-input bg-muted/30 text-muted-foreground rounded-lg border px-2.5 py-2 text-sm">
+                {activeAccountName}
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="broker">Courtier</Label>
@@ -241,7 +302,8 @@ export function ImportSheet() {
                 <button
                   type="button"
                   onClick={() => setResetOpen(true)}
-                  className="text-muted-foreground hover:text-destructive self-start text-xs underline underline-offset-2"
+                  disabled={needsTargetPick && !accountTarget}
+                  className="text-muted-foreground hover:text-destructive self-start text-xs underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Réinitialiser tous les imports {broker.name}
                 </button>
@@ -445,7 +507,15 @@ export function ImportSheet() {
 
         <SheetFooter>
           <SheetClose render={<Button type="button" variant="ghost" />}>Fermer</SheetClose>
-          <Button type="button" disabled={pending || importable.length === 0} onClick={submit}>
+          <Button
+            type="button"
+            disabled={
+              pending ||
+              importable.length === 0 ||
+              (needsTargetPick && !accountTarget)
+            }
+            onClick={submit}
+          >
             <Upload className="size-4" />
             {pending
               ? "Import en cours…"

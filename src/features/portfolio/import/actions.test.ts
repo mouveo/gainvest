@@ -12,6 +12,15 @@ vi.mock("@/lib/openfigi", () => ({
   lookupIsin: vi.fn(),
 }));
 
+vi.mock("@/features/accounts/active", () => ({
+  getActiveAccount: vi.fn(async () => "acc-1"),
+  resolveWritableAccountId: vi.fn(async (override?: string | null) =>
+    override
+      ? { ok: true as const, accountId: override }
+      : { ok: true as const, accountId: "acc-1" },
+  ),
+}));
+
 import { lookupIsin } from "@/lib/openfigi";
 import { createClient } from "@/lib/supabase/server";
 
@@ -98,13 +107,17 @@ function makeSupabase(opts: {
       if (table === "transactions") {
         return {
           select: (_cols: string) => ({
-            gte: () => ({
-              lte: async () => ({ data: [], error: null }),
-            }),
+            // dedup window read: .eq("account_id", x).gte(...).lte(...)
             eq: () => ({
+              gte: () => ({
+                lte: async () => ({ data: [], error: null }),
+              }),
+              // priorTx read: .eq("user_id").eq("account_id").eq("support").in("kind").in("instrument_id")
               eq: () => ({
-                in: () => ({
-                  in: async () => ({ data: [], error: null }),
+                eq: () => ({
+                  in: () => ({
+                    in: async () => ({ data: [], error: null }),
+                  }),
                 }),
               }),
             }),

@@ -10,6 +10,10 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(),
 }));
 
+vi.mock("@/features/accounts/active", () => ({
+  getActiveAccount: vi.fn(async () => "ALL"),
+}));
+
 vi.mock("@/lib/quotes", async () => {
   const actual = await vi.importActual<typeof import("@/lib/quotes")>("@/lib/quotes");
   return {
