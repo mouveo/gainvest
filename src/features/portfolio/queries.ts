@@ -283,33 +283,3 @@ export async function getPositions(): Promise<{
   return { orders, positions, realizations, priceByIsin, pricesUpdatedAt };
 }
 
-/**
- * Returns the user's default account id (created by the on_auth_user_created
- * trigger; the helper exists as a safety net for legacy users).
- */
-export async function getDefaultAccountId(): Promise<string> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
-
-  const { data, error } = await supabase
-    .from("accounts")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (data) return data.id;
-
-  // Should not happen — trigger creates one at signup — but be safe.
-  const { data: created, error: insertErr } = await supabase
-    .from("accounts")
-    .insert({ user_id: user.id, name: "Portefeuille", type: "cto", currency: "EUR" })
-    .select("id")
-    .single();
-  if (insertErr) throw insertErr;
-  return created.id;
-}

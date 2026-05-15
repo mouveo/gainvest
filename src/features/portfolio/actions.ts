@@ -6,7 +6,8 @@ import { type Listing, pickPreferredListing, quoteProvider } from "@/lib/quotes"
 import { findListingForPreference, shouldRejectDivergentQuote } from "@/lib/quotes/ranking";
 import { createClient } from "@/lib/supabase/server";
 
-import { getDefaultAccountId } from "./queries";
+import { getOldestAccountId } from "@/features/accounts/queries";
+
 import { SUPPORTS, type Support } from "./types";
 
 const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}\d$/;
@@ -112,7 +113,7 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   if (!fxLookup.ok) return { ok: false, error: fxLookup.error };
   const fxRate = fxLookup.rate;
 
-  const accountId = await getDefaultAccountId();
+  const accountId = await getOldestAccountId();
 
   let instrumentId: string | null = null;
   if (!isCashKind) {
@@ -320,7 +321,7 @@ export async function setCashBalance(input: {
   const anchorDate = firstDate ?? atDate;
   const initialDate = shiftDate(anchorDate < atDate ? anchorDate : atDate, -1);
 
-  const accountId = await getDefaultAccountId();
+  const accountId = await getOldestAccountId();
 
   const { error: insErr } = await supabase.from("transactions").insert({
     user_id: user.id,

@@ -8,7 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 import type { BondMetadata } from "../bonds/parse-symbol";
 import { getBroker } from "../brokers/registry";
 import type { ParsedKind, ParsedRow } from "../brokers/types";
-import { getDefaultAccountId } from "../queries";
+import { getOldestAccountId } from "@/features/accounts/queries";
+
 import { SUPPORTS, type AssetClass, type Support } from "../types";
 
 export type ImportResult =
@@ -68,7 +69,7 @@ export async function importBrokerOrders(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  const accountId = await getDefaultAccountId();
+  const accountId = await getOldestAccountId();
 
   const failed: { row: number; reason: string }[] = [];
 
