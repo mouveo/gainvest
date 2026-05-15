@@ -14,9 +14,10 @@ vi.mock("@/lib/openfigi", () => ({
 
 vi.mock("@/features/accounts/active", () => ({
   getActiveAccount: vi.fn(),
+  resolveWritableAccountId: vi.fn(),
 }));
 
-import { getActiveAccount } from "@/features/accounts/active";
+import { getActiveAccount, resolveWritableAccountId } from "@/features/accounts/active";
 import { createClient } from "@/lib/supabase/server";
 
 import type { ParsedRow } from "../brokers/types";
@@ -132,6 +133,7 @@ function makeSupabase(opts: {
 
 const createClientMock = vi.mocked(createClient);
 const getActiveAccountMock = vi.mocked(getActiveAccount);
+const resolveMock = vi.mocked(resolveWritableAccountId);
 
 function buyRow(overrides: Partial<ParsedRow> = {}): ParsedRow {
   return {
@@ -161,6 +163,7 @@ function buyRow(overrides: Partial<ParsedRow> = {}): ParsedRow {
 beforeEach(() => {
   createClientMock.mockReset();
   getActiveAccountMock.mockReset();
+  resolveMock.mockReset();
 });
 
 describe("importBrokerOrders — account isolation", () => {
@@ -183,6 +186,7 @@ describe("importBrokerOrders — account isolation", () => {
     });
     createClientMock.mockResolvedValue(sb as never);
     getActiveAccountMock.mockResolvedValue(ACC_PERSO);
+    resolveMock.mockResolvedValue({ ok: true, accountId: ACC_PERSO });
 
     const result = await importBrokerOrders("bourse-direct", "CTO", [buyRow()]);
     expect(result.ok).toBe(true);
@@ -210,6 +214,7 @@ describe("importBrokerOrders — account isolation", () => {
     });
     createClientMock.mockResolvedValue(sb as never);
     getActiveAccountMock.mockResolvedValue(ACC_PERSO);
+    resolveMock.mockResolvedValue({ ok: true, accountId: ACC_PERSO });
 
     const liq = buyRow({
       kind: "sell",
@@ -230,6 +235,10 @@ describe("importBrokerOrders — account isolation", () => {
     const sb = makeSupabase({});
     createClientMock.mockResolvedValue(sb as never);
     getActiveAccountMock.mockResolvedValue("ALL");
+    resolveMock.mockResolvedValue({
+      ok: false,
+      error: "Sélectionne un compte spécifique avant d'écrire.",
+    });
 
     const result = await importBrokerOrders("bourse-direct", "CTO", [buyRow()]);
     expect(result).toEqual({

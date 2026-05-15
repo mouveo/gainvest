@@ -14,6 +14,11 @@ vi.mock("@/lib/openfigi", () => ({
 
 vi.mock("@/features/accounts/active", () => ({
   getActiveAccount: vi.fn(async () => "acc-1"),
+  resolveWritableAccountId: vi.fn(async (override?: string | null) =>
+    override
+      ? { ok: true as const, accountId: override }
+      : { ok: true as const, accountId: "acc-1" },
+  ),
 }));
 
 import { lookupIsin } from "@/lib/openfigi";

@@ -8,6 +8,16 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(),
 }));
 
+vi.mock("@/features/accounts/active", () => ({
+  getActiveAccount: vi.fn(async () => "acc-1"),
+  resolveWritableAccountId: vi.fn(async (override?: string | null) =>
+    override
+      ? { ok: true as const, accountId: override }
+      : { ok: true as const, accountId: "acc-1" },
+  ),
+}));
+
+import { resolveWritableAccountId } from "@/features/accounts/active";
 import { createClient } from "@/lib/supabase/server";
 
 import { addOrder } from "./actions";
@@ -491,5 +501,76 @@ describe("addOrder — cash kinds", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/GBP/);
     expect(sb.inserts).toHaveLength(0);
+  });
+});
+
+describe("addOrder — account scope", () => {
+  const resolveMock = vi.mocked(resolveWritableAccountId);
+
+  function basicForm(extra: Record<string, string> = {}) {
+    return form({
+      kind: "deposit",
+      gross_amount: "1000",
+      trade_date: "2025-01-01",
+      broker: "Bourse Direct",
+      support: "CTO",
+      currency: "EUR",
+      ...extra,
+    });
+  }
+
+  it("refuses an account_id the caller does not own", async () => {
+    const sb = makeSupabase({});
+    createClientMock.mockResolvedValue(sb.client as never);
+    resolveMock.mockResolvedValueOnce({
+      ok: false,
+      error: "Compte introuvable ou non détenu.",
+    });
+
+    const r = await addOrder(
+      basicForm({ account_id: "00000000-0000-0000-0000-000000000099" }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/introuvable|détenu/i);
+    expect(sb.inserts).toHaveLength(0);
+  });
+
+  it("refuses ALL active without an account_id override", async () => {
+    const sb = makeSupabase({});
+    createClientMock.mockResolvedValue(sb.client as never);
+    resolveMock.mockResolvedValueOnce({
+      ok: false,
+      error: "Sélectionne un compte spécifique avant d'écrire.",
+    });
+
+    const r = await addOrder(basicForm());
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/compte spécifique/);
+    expect(sb.inserts).toHaveLength(0);
+  });
+
+  it("uses the active scope when no override is supplied", async () => {
+    const sb = makeSupabase({});
+    createClientMock.mockResolvedValue(sb.client as never);
+    // Default mock returns acc-1 for undefined override — exercise that path.
+    const r = await addOrder(basicForm());
+    expect(r.ok).toBe(true);
+    expect(sb.inserts).toHaveLength(1);
+    const ins = sb.inserts[0]!.payload as Record<string, unknown>;
+    expect(ins.account_id).toBe("acc-1");
+    expect(resolveMock).toHaveBeenCalledWith(null);
+  });
+
+  it("uses the override account_id when supplied", async () => {
+    const sb = makeSupabase({ accountId: "acc-2" });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const r = await addOrder(
+      basicForm({ account_id: "11111111-1111-1111-1111-111111111111" }),
+    );
+    expect(r.ok).toBe(true);
+    const ins = sb.inserts[0]!.payload as Record<string, unknown>;
+    expect(ins.account_id).toBe("11111111-1111-1111-1111-111111111111");
+    expect(resolveMock).toHaveBeenCalledWith("11111111-1111-1111-1111-111111111111");
   });
 });

@@ -6,9 +6,8 @@ import { type Listing, pickPreferredListing, quoteProvider } from "@/lib/quotes"
 import { findListingForPreference, shouldRejectDivergentQuote } from "@/lib/quotes/ranking";
 import { createClient } from "@/lib/supabase/server";
 
-import { getActiveAccount } from "@/features/accounts/active";
+import { getActiveAccount, resolveWritableAccountId } from "@/features/accounts/active";
 import { ALL_ACCOUNTS } from "@/features/accounts/constants";
-import { resolveWritableAccountId } from "@/features/accounts/queries";
 
 import { SUPPORTS, type Support } from "./types";
 
@@ -49,10 +48,7 @@ async function resolveFxRate(
  * Create (or reuse) an instrument by ISIN for buy/sell rows, or insert a
  * cash flow (deposit/withdrawal/interest/fee) without an instrument.
  */
-export async function addOrder(
-  formData: FormData,
-  options?: { accountId?: string | null },
-): Promise<AddOrderResult> {
+export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   const isin = String(formData.get("isin") ?? "")
     .trim()
     .toUpperCase();
@@ -118,7 +114,8 @@ export async function addOrder(
   if (!fxLookup.ok) return { ok: false, error: fxLookup.error };
   const fxRate = fxLookup.rate;
 
-  const resolved = await resolveWritableAccountId(options?.accountId);
+  const accountIdRaw = String(formData.get("account_id") ?? "").trim();
+  const resolved = await resolveWritableAccountId(accountIdRaw || null);
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const accountId = resolved.accountId;
 
@@ -237,16 +234,14 @@ function shiftDate(d: string, days: number): string {
  * adjusting the existing manual "Solde initial" deposit, or inserting one
  * dated just before the first observed flow.
  */
-export async function setCashBalance(
-  input: {
-    support: Support;
-    broker: string;
-    currency: string;
-    amount: number;
-    atDate: string;
-  },
-  options?: { accountId?: string | null },
-): Promise<SetCashBalanceResult> {
+export async function setCashBalance(input: {
+  support: Support;
+  broker: string;
+  currency: string;
+  amount: number;
+  atDate: string;
+  accountId?: string | null;
+}): Promise<SetCashBalanceResult> {
   const support = input.support;
   const broker = input.broker.trim();
   const currency = input.currency.trim().toUpperCase();
@@ -265,7 +260,7 @@ export async function setCashBalance(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  const resolved = await resolveWritableAccountId(options?.accountId);
+  const resolved = await resolveWritableAccountId(input.accountId);
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const accountId = resolved.accountId;
 
@@ -367,7 +362,7 @@ export async function deleteOrder(id: string): Promise<void> {
 
 export async function deleteTransactionsByBroker(
   brokerName: string,
-  options?: { accountId?: string | null },
+  accountIdOverride?: string,
 ): Promise<{ deleted: number } | { ok: false; error: string }> {
   if (!brokerName || brokerName.length > 200) {
     return { ok: false, error: "Nom de courtier invalide." };
@@ -378,23 +373,9 @@ export async function deleteTransactionsByBroker(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // Refuse "ALL" without an explicit override: nuking transactions across
-  // every account is destructive enough that we require a specific target.
-  let accountId: string | null = null;
-  if (options?.accountId !== undefined && options.accountId !== null) {
-    const resolved = await resolveWritableAccountId(options.accountId);
-    if (!resolved.ok) return { ok: false, error: resolved.error };
-    accountId = resolved.accountId;
-  } else {
-    const active = await getActiveAccount();
-    if (active === ALL_ACCOUNTS) {
-      return {
-        ok: false,
-        error: "Sélectionne un compte spécifique avant de supprimer un opérateur.",
-      };
-    }
-    accountId = active;
-  }
+  const resolved = await resolveWritableAccountId(accountIdOverride ?? null);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const accountId = resolved.accountId;
 
   const { data, error } = await supabase
     .from("transactions")

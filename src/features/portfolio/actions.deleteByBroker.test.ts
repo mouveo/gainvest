@@ -10,9 +10,10 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/features/accounts/active", () => ({
   getActiveAccount: vi.fn(),
+  resolveWritableAccountId: vi.fn(),
 }));
 
-import { getActiveAccount } from "@/features/accounts/active";
+import { getActiveAccount, resolveWritableAccountId } from "@/features/accounts/active";
 import { createClient } from "@/lib/supabase/server";
 
 import { deleteTransactionsByBroker } from "./actions";
@@ -52,10 +53,12 @@ function makeSupabase(rows: DeletedRow[]) {
 
 const createClientMock = vi.mocked(createClient);
 const getActiveAccountMock = vi.mocked(getActiveAccount);
+const resolveMock = vi.mocked(resolveWritableAccountId);
 
 beforeEach(() => {
   createClientMock.mockReset();
   getActiveAccountMock.mockReset();
+  resolveMock.mockReset();
 });
 
 describe("deleteTransactionsByBroker", () => {
@@ -65,7 +68,7 @@ describe("deleteTransactionsByBroker", () => {
       { id: "t2", account_id: "other-acct", broker: "Bourse Direct" },
     ]);
     createClientMock.mockResolvedValue(sb as never);
-    getActiveAccountMock.mockResolvedValue(ACC_PERSO);
+    resolveMock.mockResolvedValue({ ok: true, accountId: ACC_PERSO });
 
     const result = await deleteTransactionsByBroker("Bourse Direct");
     expect(result).toEqual({ deleted: 1 });
@@ -75,7 +78,10 @@ describe("deleteTransactionsByBroker", () => {
   it("refuses to run when ALL is active without an explicit override", async () => {
     const sb = makeSupabase([]);
     createClientMock.mockResolvedValue(sb as never);
-    getActiveAccountMock.mockResolvedValue("ALL");
+    resolveMock.mockResolvedValue({
+      ok: false,
+      error: "Sélectionne un compte spécifique avant d'écrire.",
+    });
 
     const result = await deleteTransactionsByBroker("Bourse Direct");
     expect(result).toEqual({

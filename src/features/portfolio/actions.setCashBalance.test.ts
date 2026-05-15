@@ -8,6 +8,16 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(),
 }));
 
+vi.mock("@/features/accounts/active", () => ({
+  getActiveAccount: vi.fn(async () => "acc-1"),
+  resolveWritableAccountId: vi.fn(async (override?: string | null) =>
+    override
+      ? { ok: true as const, accountId: override }
+      : { ok: true as const, accountId: "acc-1" },
+  ),
+}));
+
+import { resolveWritableAccountId } from "@/features/accounts/active";
 import { createClient } from "@/lib/supabase/server";
 
 import { setCashBalance } from "./actions";
@@ -39,6 +49,7 @@ function makeSupabase(opts: {
   const fx = opts.fxRates ?? [];
   const txs = opts.txs ?? [];
   const accountId = opts.accountId ?? "acc-1";
+  const txFilters: Record<string, string> = {};
 
   const client = {
     auth: {
@@ -75,12 +86,11 @@ function makeSupabase(opts: {
       }
       if (table === "transactions") {
         // Chained .eq().eq()...lte() then a final read returns the filtered txs.
-        const filters: Record<string, string> = {};
         let lteDate: string | null = null;
         const builder: Record<string, unknown> = {
           select: vi.fn(() => builder),
           eq: vi.fn((col: string, val: string) => {
-            filters[col] = val;
+            txFilters[col] = val;
             return builder;
           }),
           lte: vi.fn((_col: string, val: string) => {
@@ -92,10 +102,10 @@ function makeSupabase(opts: {
           then: (resolve: (value: { data: Tx[]; error: null }) => void) => {
             const filtered = txs.filter(
               (t) =>
-                (!filters.user_id || t.kind != null) &&
-                (!filters.support || t.support === filters.support) &&
-                (!filters.broker || t.broker === filters.broker) &&
-                (!filters.currency || t.currency === filters.currency) &&
+                (!txFilters.user_id || t.kind != null) &&
+                (!txFilters.support || t.support === txFilters.support) &&
+                (!txFilters.broker || t.broker === txFilters.broker) &&
+                (!txFilters.currency || t.currency === txFilters.currency) &&
                 (!lteDate || t.trade_date <= lteDate),
             );
             resolve({ data: filtered, error: null });
@@ -121,7 +131,7 @@ function makeSupabase(opts: {
     }),
   };
 
-  return { client, inserts, updates };
+  return { client, inserts, updates, txFilters };
 }
 
 const createClientMock = vi.mocked(createClient);
@@ -297,5 +307,60 @@ describe("setCashBalance", () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/GBP/);
+  });
+});
+
+describe("setCashBalance — account scope", () => {
+  it("refuses ALL active without an accountId override", async () => {
+    const sb = makeSupabase({ txs: [] });
+    createClientMock.mockResolvedValue(sb.client as never);
+    vi.mocked(resolveWritableAccountId).mockResolvedValueOnce({
+      ok: false,
+      error: "Sélectionne un compte spécifique avant d'écrire.",
+    });
+
+    const r = await setCashBalance({
+      support: "CTO",
+      broker: "Bourse Direct",
+      currency: "EUR",
+      amount: 1000,
+      atDate: "2025-12-31",
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/compte spécifique/);
+    expect(sb.inserts).toHaveLength(0);
+  });
+
+  it("scopes the cash replay to the target account", async () => {
+    const target = "11111111-1111-1111-1111-111111111111";
+    const sb = makeSupabase({
+      txs: [
+        {
+          id: "b1",
+          kind: "buy",
+          gross_amount: 200,
+          fees: 0,
+          trade_date: "2025-02-01",
+          support: "CTO",
+          broker: "Bourse Direct",
+          currency: "EUR",
+        },
+      ],
+    });
+    createClientMock.mockResolvedValue(sb.client as never);
+
+    const r = await setCashBalance({
+      support: "CTO",
+      broker: "Bourse Direct",
+      currency: "EUR",
+      amount: 1000,
+      atDate: "2025-12-31",
+      accountId: target,
+    });
+    expect(r.ok).toBe(true);
+    expect(sb.txFilters.account_id).toBe(target);
+    expect(sb.inserts).toHaveLength(1);
+    const ins = sb.inserts[0]!.payload as Record<string, unknown>;
+    expect(ins.account_id).toBe(target);
   });
 });

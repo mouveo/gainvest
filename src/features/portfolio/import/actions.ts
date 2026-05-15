@@ -8,9 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { BondMetadata } from "../bonds/parse-symbol";
 import { getBroker } from "../brokers/registry";
 import type { ParsedKind, ParsedRow } from "../brokers/types";
-import { getActiveAccount } from "@/features/accounts/active";
-import { ALL_ACCOUNTS } from "@/features/accounts/constants";
-import { resolveWritableAccountId } from "@/features/accounts/queries";
+import { resolveWritableAccountId } from "@/features/accounts/active";
 
 import { SUPPORTS, type AssetClass, type Support } from "../types";
 
@@ -73,23 +71,11 @@ export async function importBrokerOrders(
   if (!user) return { ok: false, error: "Non authentifié." };
 
   // Imports must target a specific account: dedup + liquidation inference are
-  // both scoped per-account, so refusing ALL without an explicit override is
-  // the only sane default.
-  let accountId: string;
-  if (options?.accountId !== undefined && options.accountId !== null) {
-    const resolved = await resolveWritableAccountId(options.accountId);
-    if (!resolved.ok) return { ok: false, error: resolved.error };
-    accountId = resolved.accountId;
-  } else {
-    const active = await getActiveAccount();
-    if (active === ALL_ACCOUNTS) {
-      return {
-        ok: false,
-        error: "Sélectionne un compte spécifique avant d'importer.",
-      };
-    }
-    accountId = active;
-  }
+  // both scoped per-account, so the resolver refuses ALL without an explicit
+  // override.
+  const resolved = await resolveWritableAccountId(options?.accountId ?? null);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const accountId = resolved.accountId;
 
   const failed: { row: number; reason: string }[] = [];
 

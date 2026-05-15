@@ -96,30 +96,3 @@ export async function userOwnsAccount(accountId: string): Promise<boolean> {
   return data != null;
 }
 
-/**
- * Pick an account id for a write operation: an explicit override (verified
- * against the caller's owned accounts) takes precedence over the oldest
- * account fallback.
- */
-export async function resolveWritableAccountId(
-  override?: string | null,
-): Promise<{ ok: true; accountId: string } | { ok: false; error: string }> {
-  if (override) {
-    const trimmed = override.trim();
-    if (!isUuid(trimmed)) {
-      return { ok: false, error: "Identifiant de compte invalide." };
-    }
-    const owns = await userOwnsAccount(trimmed);
-    if (!owns) {
-      return { ok: false, error: "Compte introuvable ou non détenu." };
-    }
-    return { ok: true, accountId: trimmed };
-  }
-  try {
-    const accountId = await getOldestAccountId();
-    return { ok: true, accountId };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message };
-  }
-}
