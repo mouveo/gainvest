@@ -8,7 +8,9 @@ import { createClient } from "@/lib/supabase/server";
 import type { BondMetadata } from "../bonds/parse-symbol";
 import { getBroker } from "../brokers/registry";
 import type { ParsedKind, ParsedRow } from "../brokers/types";
-import { getOldestAccountId } from "@/features/accounts/queries";
+import { getActiveAccount } from "@/features/accounts/active";
+import { ALL_ACCOUNTS } from "@/features/accounts/constants";
+import { resolveWritableAccountId } from "@/features/accounts/queries";
 
 import { SUPPORTS, type AssetClass, type Support } from "../types";
 
@@ -55,6 +57,7 @@ export async function importBrokerOrders(
   support: Support,
   rows: ParsedRow[],
   warnings: string[] = [],
+  options?: { accountId?: string | null },
 ): Promise<ImportResult> {
   const brokerProfile = getBroker(brokerId);
   if (!brokerProfile) return { ok: false, error: "Courtier inconnu." };
@@ -69,7 +72,24 @@ export async function importBrokerOrders(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  const accountId = await getOldestAccountId();
+  // Imports must target a specific account: dedup + liquidation inference are
+  // both scoped per-account, so refusing ALL without an explicit override is
+  // the only sane default.
+  let accountId: string;
+  if (options?.accountId !== undefined && options.accountId !== null) {
+    const resolved = await resolveWritableAccountId(options.accountId);
+    if (!resolved.ok) return { ok: false, error: resolved.error };
+    accountId = resolved.accountId;
+  } else {
+    const active = await getActiveAccount();
+    if (active === ALL_ACCOUNTS) {
+      return {
+        ok: false,
+        error: "Sélectionne un compte spécifique avant d'importer.",
+      };
+    }
+    accountId = active;
+  }
 
   const failed: { row: number; reason: string }[] = [];
 
@@ -111,6 +131,7 @@ export async function importBrokerOrders(
         .from("transactions")
         .select("kind, quantity, trade_date, support, instrument_id")
         .eq("user_id", user.id)
+        .eq("account_id", accountId)
         .eq("support", support)
         .in("kind", ["buy", "sell"])
         .in("instrument_id", instIds);
@@ -382,6 +403,7 @@ export async function importBrokerOrders(
     const { data: existingTx, error: existingErr } = await supabase
       .from("transactions")
       .select("instrument_id, trade_date, kind, quantity, gross_amount, support, external_id")
+      .eq("account_id", accountId)
       .gte("trade_date", minDate)
       .lte("trade_date", maxDate);
     if (existingErr) return { ok: false, error: existingErr.message };

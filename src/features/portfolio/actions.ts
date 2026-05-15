@@ -6,7 +6,9 @@ import { type Listing, pickPreferredListing, quoteProvider } from "@/lib/quotes"
 import { findListingForPreference, shouldRejectDivergentQuote } from "@/lib/quotes/ranking";
 import { createClient } from "@/lib/supabase/server";
 
-import { getOldestAccountId } from "@/features/accounts/queries";
+import { getActiveAccount } from "@/features/accounts/active";
+import { ALL_ACCOUNTS } from "@/features/accounts/constants";
+import { resolveWritableAccountId } from "@/features/accounts/queries";
 
 import { SUPPORTS, type Support } from "./types";
 
@@ -47,7 +49,10 @@ async function resolveFxRate(
  * Create (or reuse) an instrument by ISIN for buy/sell rows, or insert a
  * cash flow (deposit/withdrawal/interest/fee) without an instrument.
  */
-export async function addOrder(formData: FormData): Promise<AddOrderResult> {
+export async function addOrder(
+  formData: FormData,
+  options?: { accountId?: string | null },
+): Promise<AddOrderResult> {
   const isin = String(formData.get("isin") ?? "")
     .trim()
     .toUpperCase();
@@ -113,7 +118,9 @@ export async function addOrder(formData: FormData): Promise<AddOrderResult> {
   if (!fxLookup.ok) return { ok: false, error: fxLookup.error };
   const fxRate = fxLookup.rate;
 
-  const accountId = await getOldestAccountId();
+  const resolved = await resolveWritableAccountId(options?.accountId);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const accountId = resolved.accountId;
 
   let instrumentId: string | null = null;
   if (!isCashKind) {
@@ -230,13 +237,16 @@ function shiftDate(d: string, days: number): string {
  * adjusting the existing manual "Solde initial" deposit, or inserting one
  * dated just before the first observed flow.
  */
-export async function setCashBalance(input: {
-  support: Support;
-  broker: string;
-  currency: string;
-  amount: number;
-  atDate: string;
-}): Promise<SetCashBalanceResult> {
+export async function setCashBalance(
+  input: {
+    support: Support;
+    broker: string;
+    currency: string;
+    amount: number;
+    atDate: string;
+  },
+  options?: { accountId?: string | null },
+): Promise<SetCashBalanceResult> {
   const support = input.support;
   const broker = input.broker.trim();
   const currency = input.currency.trim().toUpperCase();
@@ -255,6 +265,10 @@ export async function setCashBalance(input: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
+  const resolved = await resolveWritableAccountId(options?.accountId);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const accountId = resolved.accountId;
+
   const fxLookup = await resolveFxRate(supabase, currency);
   if (!fxLookup.ok) return { ok: false, error: fxLookup.error };
   const fxRate = fxLookup.rate;
@@ -265,6 +279,7 @@ export async function setCashBalance(input: {
     .from("transactions")
     .select("id, kind, gross_amount, fees, trade_date, notes")
     .eq("user_id", user.id)
+    .eq("account_id", accountId)
     .eq("support", support)
     .eq("broker", broker)
     .eq("currency", currency)
@@ -321,8 +336,6 @@ export async function setCashBalance(input: {
   const anchorDate = firstDate ?? atDate;
   const initialDate = shiftDate(anchorDate < atDate ? anchorDate : atDate, -1);
 
-  const accountId = await getOldestAccountId();
-
   const { error: insErr } = await supabase.from("transactions").insert({
     user_id: user.id,
     account_id: accountId,
@@ -354,6 +367,7 @@ export async function deleteOrder(id: string): Promise<void> {
 
 export async function deleteTransactionsByBroker(
   brokerName: string,
+  options?: { accountId?: string | null },
 ): Promise<{ deleted: number } | { ok: false; error: string }> {
   if (!brokerName || brokerName.length > 200) {
     return { ok: false, error: "Nom de courtier invalide." };
@@ -364,12 +378,29 @@ export async function deleteTransactionsByBroker(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // RLS already restricts deletions to the caller's own rows, but we filter
-  // explicitly on user_id to keep the intent visible at the call site.
+  // Refuse "ALL" without an explicit override: nuking transactions across
+  // every account is destructive enough that we require a specific target.
+  let accountId: string | null = null;
+  if (options?.accountId !== undefined && options.accountId !== null) {
+    const resolved = await resolveWritableAccountId(options.accountId);
+    if (!resolved.ok) return { ok: false, error: resolved.error };
+    accountId = resolved.accountId;
+  } else {
+    const active = await getActiveAccount();
+    if (active === ALL_ACCOUNTS) {
+      return {
+        ok: false,
+        error: "Sélectionne un compte spécifique avant de supprimer un opérateur.",
+      };
+    }
+    accountId = active;
+  }
+
   const { data, error } = await supabase
     .from("transactions")
     .delete()
     .eq("user_id", user.id)
+    .eq("account_id", accountId)
     .eq("broker", brokerName)
     .select("id");
 
@@ -418,15 +449,19 @@ export async function setInstrumentListing(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // RLS filters to the caller's rows; we double-check ownership here so the
-  // server action refuses cleanly when the instrument isn't held.
-  const { data: txn, error: txnErr } = await supabase
+  // Ownership check: when a specific account is active, restrict to that
+  // account's transactions. In ALL mode, fall back to the user-wide check
+  // so consolidated views can still edit listings they hold somewhere.
+  const active = await getActiveAccount();
+  let txnQuery = supabase
     .from("transactions")
     .select("id")
     .eq("user_id", user.id)
-    .eq("instrument_id", instrumentId)
-    .limit(1)
-    .maybeSingle();
+    .eq("instrument_id", instrumentId);
+  if (active !== ALL_ACCOUNTS) {
+    txnQuery = txnQuery.eq("account_id", active);
+  }
+  const { data: txn, error: txnErr } = await txnQuery.limit(1).maybeSingle();
   if (txnErr) return { ok: false, error: txnErr.message };
   if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
 
@@ -481,15 +516,18 @@ export async function setBondMetadata(args: {
   if (!user) return { ok: false, error: "Non authentifié." };
 
   // Mirror setInstrumentListing: only allow editing an instrument the user
-  // actually holds via at least one transaction. Stops random rewrites of
-  // the global instruments catalog.
-  const { data: txn, error: txnErr } = await supabase
+  // actually holds via at least one transaction. Scopes to the active account
+  // when one is selected; falls back to user-wide in ALL mode.
+  const active = await getActiveAccount();
+  let txnQuery = supabase
     .from("transactions")
     .select("id")
     .eq("user_id", user.id)
-    .eq("instrument_id", instrumentId)
-    .limit(1)
-    .maybeSingle();
+    .eq("instrument_id", instrumentId);
+  if (active !== ALL_ACCOUNTS) {
+    txnQuery = txnQuery.eq("account_id", active);
+  }
+  const { data: txn, error: txnErr } = await txnQuery.limit(1).maybeSingle();
   if (txnErr) return { ok: false, error: txnErr.message };
   if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
 
@@ -555,7 +593,8 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
   } = await supabase.auth.getUser();
   if (!user) return { refreshed: 0, skipped: 0, failed: [] };
 
-  const { data: rows, error } = await supabase
+  const active = await getActiveAccount();
+  let rowsQuery = supabase
     .from("transactions")
     .select(
       `
@@ -574,6 +613,10 @@ export async function refreshPrices(options?: { force?: boolean }): Promise<{
       `,
     )
     .in("kind", ["buy", "sell"]);
+  if (active !== ALL_ACCOUNTS) {
+    rowsQuery = rowsQuery.eq("account_id", active);
+  }
+  const { data: rows, error } = await rowsQuery;
 
   if (error) throw error;
 
