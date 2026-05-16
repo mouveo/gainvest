@@ -22,6 +22,17 @@ function totals(overrides: Partial<PortfolioTotals>): PortfolioTotals {
     totalFees: 0,
     lines: 0,
     kpiMode: "instruments",
+    investedReal: 0,
+    dividendsTotalReal: 0,
+    holdingFeesTotalReal: 0,
+    pnlReal: 0,
+    pnlTotalReal: 0,
+    pnlPctReal: 0,
+    pnlPctTotalReal: 0,
+    xirrCapitalReal: 0,
+    xirrTotalReal: 0,
+    xirrCapitalNetFeesReal: 0,
+    xirrTotalNetFeesReal: 0,
     ...overrides,
   };
 }
@@ -81,5 +92,34 @@ describe("getPositionsKpiCopy", () => {
     );
     expect(copy.xirrSubLabel).toBe("Rendement annualisé cash");
     expect(copy.pnlLabel).toBe("Gain net");
+  });
+
+  it("appends '€ réels · base 2025' to sub-labels when inflationAdjusted is on", () => {
+    const copy = getPositionsKpiCopy(
+      totals({ kpiMode: "instruments", lines: 2, totalFees: 30 }),
+      { withDividends: true, netOfFees: false, inflationAdjusted: true },
+    );
+    expect(copy.investedSub).toContain("€ réels · base 2025");
+    expect(copy.xirrSubLabel).toContain("€ réels · base 2025");
+    expect(copy.xirrSubLabel).toBe("MWR · avec divs · € réels · base 2025");
+  });
+
+  it("keeps nominal sub-labels when inflationAdjusted is off", () => {
+    const copy = getPositionsKpiCopy(
+      totals({ kpiMode: "instruments", lines: 1 }),
+      { withDividends: false, netOfFees: false, inflationAdjusted: false },
+    );
+    expect(copy.investedSub).not.toContain("€ réels");
+    expect(copy.xirrSubLabel).not.toContain("€ réels");
+  });
+
+  it("appends '€ réels' suffix on cash mode as well", () => {
+    const copy = getPositionsKpiCopy(
+      totals({ kpiMode: "cash", lines: 1, holdingFeesTotal: 0 }),
+      { withDividends: false, netOfFees: false, inflationAdjusted: true },
+    );
+    expect(copy.xirrSubLabel).toBe(
+      "Rendement annualisé cash · € réels · base 2025",
+    );
   });
 });

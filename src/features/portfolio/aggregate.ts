@@ -168,6 +168,29 @@ export type Position = {
   bondMaturityDate: string | null;
   bondCouponFrequency: 1 | 2 | 4 | null;
   fxToEur: number;
+  // Inflation-adjusted variants: every historical buy / dividend / fee leg
+  // rescaled to euros at `today` purchasing power. See realize.ts /
+  // inflation.ts. `pnl` and `pnlPct` keep their nominal meaning; the toggle
+  // happens at the consumer layer (LOT 3).
+  investedReal: number;
+  dividendsAttributedReal: number;
+  holdingFeesReal: number;
+  pnlCapitalReal: number;
+  pnlTotalReal: number;
+  pnlCapitalNetFeesReal: number;
+  pnlTotalNetFeesReal: number;
+  pnlPctCapitalReal: number;
+  pnlPctTotalReal: number;
+  pnlPctCapitalNetFeesReal: number;
+  pnlPctTotalNetFeesReal: number;
+  xirrCapitalReal: number;
+  xirrTotalReal: number;
+  xirrCapitalNetFeesReal: number;
+  xirrTotalNetFeesReal: number;
+  cashFlowsCapitalReal: Flow[];
+  cashFlowsTotalReal: Flow[];
+  cashFlowsCapitalNetFeesReal: Flow[];
+  cashFlowsTotalNetFeesReal: Flow[];
 };
 
 function activeToPosition(p: ActivePosition): Position {
@@ -223,6 +246,25 @@ function activeToPosition(p: ActivePosition): Position {
     bondMaturityDate: p.bondMaturityDate,
     bondCouponFrequency: p.bondCouponFrequency,
     fxToEur: p.fxToEur,
+    investedReal: p.investedReal,
+    dividendsAttributedReal: p.dividendsAttributedReal,
+    holdingFeesReal: p.holdingFeesReal,
+    pnlCapitalReal: p.pnlCapitalReal,
+    pnlTotalReal: p.pnlTotalReal,
+    pnlCapitalNetFeesReal: p.pnlCapitalNetFeesReal,
+    pnlTotalNetFeesReal: p.pnlTotalNetFeesReal,
+    pnlPctCapitalReal: p.pnlPctCapitalReal,
+    pnlPctTotalReal: p.pnlPctTotalReal,
+    pnlPctCapitalNetFeesReal: p.pnlPctCapitalNetFeesReal,
+    pnlPctTotalNetFeesReal: p.pnlPctTotalNetFeesReal,
+    xirrCapitalReal: p.xirrCapitalReal,
+    xirrTotalReal: p.xirrTotalReal,
+    xirrCapitalNetFeesReal: p.xirrCapitalNetFeesReal,
+    xirrTotalNetFeesReal: p.xirrTotalNetFeesReal,
+    cashFlowsCapitalReal: p.cashFlowsCapitalReal,
+    cashFlowsTotalReal: p.cashFlowsTotalReal,
+    cashFlowsCapitalNetFeesReal: p.cashFlowsCapitalNetFeesReal,
+    cashFlowsTotalNetFeesReal: p.cashFlowsTotalNetFeesReal,
   };
 }
 
@@ -282,6 +324,20 @@ export type PortfolioTotals = {
   // from the cash flows themselves (deposits, withdrawals, buys, sells,
   // dividends/interest routed to instruments).
   kpiMode: "instruments" | "cash";
+  // Inflation-adjusted variants of the totals above. Computed by concatenating
+  // every position's `cashFlows*Real` and re-running xirr() — never by summing
+  // per-position rates. Scalar fields are summed from positional reals.
+  investedReal: number;
+  dividendsTotalReal: number;
+  holdingFeesTotalReal: number;
+  pnlReal: number;
+  pnlTotalReal: number;
+  pnlPctReal: number;
+  pnlPctTotalReal: number;
+  xirrCapitalReal: number;
+  xirrTotalReal: number;
+  xirrCapitalNetFeesReal: number;
+  xirrTotalNetFeesReal: number;
 };
 
 export type RealizationTotals = {
@@ -294,23 +350,48 @@ export type RealizationTotals = {
   xirrTotal: number;
   xirrCapitalNetFees: number;
   xirrTotalNetFees: number;
+  // Inflation-adjusted variants. Scalars summed from per-realization reals,
+  // XIRR weighted by `costBasisReal` to mirror the nominal weighting.
+  capitalRecoveredReal: number;
+  costBasisReal: number;
+  dividendsReal: number;
+  holdingFeesReal: number;
+  pnlCapitalReal: number;
+  pnlTotalReal: number;
+  pnlCapitalNetFeesReal: number;
+  pnlTotalNetFeesReal: number;
+  xirrCapitalReal: number;
+  xirrTotalReal: number;
+  xirrCapitalNetFeesReal: number;
+  xirrTotalNetFeesReal: number;
 };
 
 type XirrKey =
   | "xirrCapital"
   | "xirrTotal"
   | "xirrCapitalNetFees"
-  | "xirrTotalNetFees";
+  | "xirrTotalNetFees"
+  | "xirrCapitalReal"
+  | "xirrTotalReal"
+  | "xirrCapitalNetFeesReal"
+  | "xirrTotalNetFeesReal";
 
-function weightedXirr(reals: PastRealization[], key: XirrKey): number {
+type WeightKey = "costBasis" | "costBasisReal";
+
+function weightedXirr(
+  reals: PastRealization[],
+  key: XirrKey,
+  weight: WeightKey = "costBasis",
+): number {
   let weighted = 0;
   let totalWeight = 0;
   for (const r of reals) {
     const rate = r[key];
     if (!Number.isFinite(rate)) continue;
-    if (r.costBasis <= 0) continue;
-    weighted += rate * r.costBasis;
-    totalWeight += r.costBasis;
+    const w = r[weight];
+    if (w <= 0) continue;
+    weighted += rate * w;
+    totalWeight += w;
   }
   return totalWeight > 0 ? weighted / totalWeight : Number.NaN;
 }
@@ -320,11 +401,27 @@ export function computeRealizationTotals(reals: PastRealization[]): RealizationT
   let costBasis = 0;
   let pnlCapital = 0;
   let pnlTotal = 0;
+  let capitalRecoveredReal = 0;
+  let costBasisReal = 0;
+  let dividendsReal = 0;
+  let holdingFeesReal = 0;
+  let pnlCapitalReal = 0;
+  let pnlTotalReal = 0;
+  let pnlCapitalNetFeesReal = 0;
+  let pnlTotalNetFeesReal = 0;
   for (const r of reals) {
     capitalRecovered += r.saleNet;
     costBasis += r.costBasis;
     pnlCapital += r.pnlCapital;
     pnlTotal += r.pnlTotal;
+    capitalRecoveredReal += r.capitalRecoveredReal;
+    costBasisReal += r.costBasisReal;
+    dividendsReal += r.dividendsAttributedReal;
+    holdingFeesReal += r.holdingFeesAttributedReal;
+    pnlCapitalReal += r.pnlCapitalReal;
+    pnlTotalReal += r.pnlTotalReal;
+    pnlCapitalNetFeesReal += r.pnlCapitalNetFeesReal;
+    pnlTotalNetFeesReal += r.pnlTotalNetFeesReal;
   }
   return {
     count: reals.length,
@@ -336,6 +433,26 @@ export function computeRealizationTotals(reals: PastRealization[]): RealizationT
     xirrTotal: weightedXirr(reals, "xirrTotal"),
     xirrCapitalNetFees: weightedXirr(reals, "xirrCapitalNetFees"),
     xirrTotalNetFees: weightedXirr(reals, "xirrTotalNetFees"),
+    capitalRecoveredReal,
+    costBasisReal,
+    dividendsReal,
+    holdingFeesReal,
+    pnlCapitalReal,
+    pnlTotalReal,
+    pnlCapitalNetFeesReal,
+    pnlTotalNetFeesReal,
+    xirrCapitalReal: weightedXirr(reals, "xirrCapitalReal", "costBasisReal"),
+    xirrTotalReal: weightedXirr(reals, "xirrTotalReal", "costBasisReal"),
+    xirrCapitalNetFeesReal: weightedXirr(
+      reals,
+      "xirrCapitalNetFeesReal",
+      "costBasisReal",
+    ),
+    xirrTotalNetFeesReal: weightedXirr(
+      reals,
+      "xirrTotalNetFeesReal",
+      "costBasisReal",
+    ),
   };
 }
 
@@ -408,17 +525,24 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     let pnlSum = 0;
     let totalFees = 0;
     let holdingFeesTotal = 0;
+    let holdingFeesTotalReal = 0;
     const flowsAll: Flow[] = [];
+    const flowsAllReal: Flow[] = [];
     for (const p of positions) {
       valuation += p.valuation;
       pnlSum += p.pnlTotal;
       totalFees += p.totalFees;
       holdingFeesTotal += p.holdingFees;
+      holdingFeesTotalReal += p.holdingFeesReal;
       if (p.cashFlowsCapital) for (const f of p.cashFlowsCapital) flowsAll.push(f);
+      if (p.cashFlowsCapitalReal) {
+        for (const f of p.cashFlowsCapitalReal) flowsAllReal.push(f);
+      }
     }
     const invested = valuation; // proxy of current balance — see note above
     const pnlPct = invested > 0 ? pnlSum / invested : 0;
     const xirrCash = xirr(flowsAll);
+    const xirrCashReal = xirr(flowsAllReal);
     return {
       invested,
       valuation,
@@ -437,6 +561,17 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
       totalFees,
       lines: positions.length,
       kpiMode: "cash",
+      investedReal: invested,
+      dividendsTotalReal: 0,
+      holdingFeesTotalReal,
+      pnlReal: pnlSum,
+      pnlTotalReal: pnlSum,
+      pnlPctReal: pnlPct,
+      pnlPctTotalReal: pnlPct,
+      xirrCapitalReal: xirrCashReal,
+      xirrTotalReal: xirrCashReal,
+      xirrCapitalNetFeesReal: xirrCashReal,
+      xirrTotalNetFeesReal: xirrCashReal,
     };
   }
 
@@ -449,10 +584,17 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
   let dividendsTotal = 0;
   let holdingFeesTotal = 0;
   let weightedDateMs = 0;
+  let investedReal = 0;
+  let dividendsTotalReal = 0;
+  let holdingFeesTotalReal = 0;
   const cfCapital: Flow[] = [];
   const cfTotal: Flow[] = [];
   const cfCapitalNetFees: Flow[] = [];
   const cfTotalNetFees: Flow[] = [];
+  const cfCapitalReal: Flow[] = [];
+  const cfTotalReal: Flow[] = [];
+  const cfCapitalNetFeesReal: Flow[] = [];
+  const cfTotalNetFeesReal: Flow[] = [];
 
   for (const p of positions) {
     valuation += p.valuation;
@@ -462,6 +604,9 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     totalFees += p.totalFees;
     dividendsTotal += p.dividendsAttributed;
     holdingFeesTotal += p.holdingFees;
+    investedReal += p.investedReal;
+    dividendsTotalReal += p.dividendsAttributedReal;
+    holdingFeesTotalReal += p.holdingFeesReal;
     weightedDateMs += p.meanDate.getTime() * p.invested;
     if (p.cashFlowsCapital) for (const f of p.cashFlowsCapital) cfCapital.push(f);
     if (p.cashFlowsTotal) for (const f of p.cashFlowsTotal) cfTotal.push(f);
@@ -470,6 +615,18 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     }
     if (p.cashFlowsTotalNetFees) {
       for (const f of p.cashFlowsTotalNetFees) cfTotalNetFees.push(f);
+    }
+    if (p.cashFlowsCapitalReal) {
+      for (const f of p.cashFlowsCapitalReal) cfCapitalReal.push(f);
+    }
+    if (p.cashFlowsTotalReal) {
+      for (const f of p.cashFlowsTotalReal) cfTotalReal.push(f);
+    }
+    if (p.cashFlowsCapitalNetFeesReal) {
+      for (const f of p.cashFlowsCapitalNetFeesReal) cfCapitalNetFeesReal.push(f);
+    }
+    if (p.cashFlowsTotalNetFeesReal) {
+      for (const f of p.cashFlowsTotalNetFeesReal) cfTotalNetFeesReal.push(f);
     }
   }
 
@@ -492,6 +649,11 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
   const xirrCapitalNetFees = xirr(cfCapitalNetFees);
   const xirrTotalNetFees = xirr(cfTotalNetFees);
 
+  const pnlReal = instrumentValuation - investedReal;
+  const pnlTotalReal = instrumentValuation + dividendsTotalReal - investedReal;
+  const pnlPctReal = investedReal > 0 ? pnlReal / investedReal : 0;
+  const pnlPctTotalReal = investedReal > 0 ? pnlTotalReal / investedReal : 0;
+
   return {
     invested,
     valuation,
@@ -510,5 +672,16 @@ export function computeTotals(positions: Position[], today: Date = new Date()): 
     totalFees,
     lines: positions.length,
     kpiMode: "instruments",
+    investedReal,
+    dividendsTotalReal,
+    holdingFeesTotalReal,
+    pnlReal,
+    pnlTotalReal,
+    pnlPctReal,
+    pnlPctTotalReal,
+    xirrCapitalReal: xirr(cfCapitalReal),
+    xirrTotalReal: xirr(cfTotalReal),
+    xirrCapitalNetFeesReal: xirr(cfCapitalNetFeesReal),
+    xirrTotalNetFeesReal: xirr(cfTotalNetFeesReal),
   };
 }

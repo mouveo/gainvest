@@ -6,6 +6,7 @@ import {
   currentPriceCell,
   holdingFeesCell,
   orderPriceCell,
+  pickPnlValue,
   pnlAnnualizedCell,
   pnlPctCell,
   pruCell,
@@ -65,6 +66,25 @@ function pos(overrides: Partial<Position> = {}): Position {
     bondMaturityDate: null,
     bondCouponFrequency: null,
     fxToEur: 1,
+    investedReal: 1000,
+    dividendsAttributedReal: 0,
+    holdingFeesReal: 0,
+    pnlCapitalReal: 100,
+    pnlTotalReal: 100,
+    pnlCapitalNetFeesReal: 100,
+    pnlTotalNetFeesReal: 100,
+    pnlPctCapitalReal: 0.1,
+    pnlPctTotalReal: 0.1,
+    pnlPctCapitalNetFeesReal: 0.1,
+    pnlPctTotalNetFeesReal: 0.1,
+    xirrCapitalReal: 0.05,
+    xirrTotalReal: 0.05,
+    xirrCapitalNetFeesReal: 0.05,
+    xirrTotalNetFeesReal: 0.05,
+    cashFlowsCapitalReal: [],
+    cashFlowsTotalReal: [],
+    cashFlowsCapitalNetFeesReal: [],
+    cashFlowsTotalNetFeesReal: [],
     ...overrides,
   };
 }
@@ -283,6 +303,124 @@ describe("orderPriceCell", () => {
       kind: "eur",
       text: "0,012345 €",
     });
+  });
+});
+
+describe("inflation toggle — cell selection", () => {
+  it("pickPnlValue switches between nominal and real PnL based on inflationAdjusted", () => {
+    const p = pos({
+      pnlCapital: 100,
+      pnlTotal: 130,
+      pnlCapitalReal: 80,
+      pnlTotalReal: 105,
+      pnlCapitalNetFeesReal: 75,
+      pnlTotalNetFeesReal: 95,
+      holdingFees: 10,
+    });
+    expect(
+      pickPnlValue(p, { withDividends: false, netOfFees: false, inflationAdjusted: false }),
+    ).toBe(100);
+    expect(
+      pickPnlValue(p, { withDividends: true, netOfFees: false, inflationAdjusted: false }),
+    ).toBe(130);
+    expect(
+      pickPnlValue(p, { withDividends: false, netOfFees: false, inflationAdjusted: true }),
+    ).toBe(80);
+    expect(
+      pickPnlValue(p, { withDividends: true, netOfFees: false, inflationAdjusted: true }),
+    ).toBe(105);
+  });
+
+  it("pickPnlValue uses dedicated *NetFeesReal scalars when both inflation+netOfFees are on", () => {
+    const p = pos({
+      pnlCapital: 100,
+      pnlTotal: 130,
+      pnlCapitalReal: 80,
+      pnlTotalReal: 105,
+      pnlCapitalNetFeesReal: 75,
+      pnlTotalNetFeesReal: 95,
+      holdingFees: 10,
+    });
+    // No UI subtraction — pulls the pre-computed scalar.
+    expect(
+      pickPnlValue(p, { withDividends: false, netOfFees: true, inflationAdjusted: true }),
+    ).toBe(75);
+    expect(
+      pickPnlValue(p, { withDividends: true, netOfFees: true, inflationAdjusted: true }),
+    ).toBe(95);
+    // Nominal net-of-fees keeps the legacy `base - holdingFees` path.
+    expect(
+      pickPnlValue(p, { withDividends: false, netOfFees: true, inflationAdjusted: false }),
+    ).toBe(100 - 10);
+    expect(
+      pickPnlValue(p, { withDividends: true, netOfFees: true, inflationAdjusted: false }),
+    ).toBe(130 - 10);
+  });
+
+  it("pnlPctCell divides real PnL by investedReal when inflationAdjusted is on", () => {
+    const p = pos({
+      pnlCapital: 100,
+      pnlTotal: 100,
+      pnlCapitalReal: 80,
+      pnlTotalReal: 80,
+      pnlCapitalNetFeesReal: 80,
+      pnlTotalNetFeesReal: 80,
+      invested: 1000,
+      investedReal: 1250,
+      holdingFees: 0,
+    });
+    const cell = pnlPctCell(p, {
+      withDividends: false,
+      netOfFees: false,
+      inflationAdjusted: true,
+    });
+    expect(cell).toEqual({ kind: "pct", value: 80 / 1250 });
+  });
+
+  it("pnlAnnualizedCell picks xirrTotalNetFeesReal for the three-on combination", () => {
+    const p = pos({
+      xirrCapital: 0.1,
+      xirrTotal: 0.12,
+      xirrCapitalNetFees: 0.09,
+      xirrTotalNetFees: 0.11,
+      xirrCapitalReal: 0.06,
+      xirrTotalReal: 0.07,
+      xirrCapitalNetFeesReal: 0.05,
+      xirrTotalNetFeesReal: 0.065,
+    });
+    expect(
+      pnlAnnualizedCell(p, {
+        withDividends: true,
+        netOfFees: true,
+        inflationAdjusted: true,
+      }),
+    ).toEqual({ kind: "rate", value: 0.065 });
+    expect(
+      pnlAnnualizedCell(p, {
+        withDividends: false,
+        netOfFees: false,
+        inflationAdjusted: true,
+      }),
+    ).toEqual({ kind: "rate", value: 0.06 });
+  });
+
+  it("pnlAnnualizedCell falls back to dash when the picked real XIRR is non-finite", () => {
+    const p = pos({
+      xirrCapital: 0.1,
+      xirrTotal: 0.1,
+      xirrCapitalNetFees: 0.1,
+      xirrTotalNetFees: 0.1,
+      xirrCapitalReal: Number.NaN,
+      xirrTotalReal: Number.NaN,
+      xirrCapitalNetFeesReal: Number.NaN,
+      xirrTotalNetFeesReal: Number.NaN,
+    });
+    const cell = pnlAnnualizedCell(p, {
+      withDividends: false,
+      netOfFees: false,
+      inflationAdjusted: true,
+    });
+    expect(cell.kind).toBe("dash");
   });
 });
 

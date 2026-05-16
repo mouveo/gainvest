@@ -9,6 +9,10 @@
 import type { CurrentPrice, OrderRow, TradableOrder } from "./aggregate";
 import { feesEur, grossAmountEur } from "./aggregate";
 import { isForeignIsin, isHoldingFee } from "./holding-fees";
+import {
+  adjustFlowsForInflation,
+  adjustForInflation,
+} from "./inflation";
 import type { Support } from "./types";
 import { xirr, type Flow } from "./xirr";
 
@@ -75,8 +79,30 @@ export type ActivePosition = {
   bondMaturityDate: string | null;
   bondCouponFrequency: 1 | 2 | 4 | null;
   fxToEur: number;
+  // Inflation-adjusted variants: every historical buy / dividend / fee flow
+  // rescaled to euros at `todayStr` purchasing power, then re-summed and
+  // re-XIRR'd. The valuation flow is kept unchanged (already in today's
+  // euros). See `src/features/portfolio/inflation.ts`.
+  investedReal: number;
+  dividendsAttributedReal: number;
+  holdingFeesReal: number;
+  pnlCapitalReal: number;
+  pnlTotalReal: number;
+  pnlCapitalNetFeesReal: number;
+  pnlTotalNetFeesReal: number;
+  pnlPctCapitalReal: number;
+  pnlPctTotalReal: number;
+  pnlPctCapitalNetFeesReal: number;
+  pnlPctTotalNetFeesReal: number;
+  xirrCapitalReal: number;
+  xirrTotalReal: number;
+  xirrCapitalNetFeesReal: number;
+  xirrTotalNetFeesReal: number;
+  cashFlowsCapitalReal: Flow[];
+  cashFlowsTotalReal: Flow[];
+  cashFlowsCapitalNetFeesReal: Flow[];
+  cashFlowsTotalNetFeesReal: Flow[];
 };
-
 export type PastRealization = {
   key: string;
   isin: string;
@@ -99,6 +125,22 @@ export type PastRealization = {
   xirrTotal: number;
   xirrCapitalNetFees: number;
   xirrTotalNetFees: number;
+  // Inflation-adjusted variants — same flows, but every historical buy /
+  // dividend / fee / sale leg rescaled to euros at `todayStr` purchasing
+  // power (see `src/features/portfolio/inflation.ts`).
+  saleNetReal: number;
+  costBasisReal: number;
+  capitalRecoveredReal: number;
+  dividendsAttributedReal: number;
+  holdingFeesAttributedReal: number;
+  pnlCapitalReal: number;
+  pnlTotalReal: number;
+  pnlCapitalNetFeesReal: number;
+  pnlTotalNetFeesReal: number;
+  xirrCapitalReal: number;
+  xirrTotalReal: number;
+  xirrCapitalNetFeesReal: number;
+  xirrTotalNetFeesReal: number;
 };
 
 export type ReplayResult = {
@@ -261,6 +303,7 @@ export function replayTransactions(
   const sorted = orders.slice().sort(compareOrders);
   const lines = new Map<string, LineState>();
   const cash = new Map<string, CashState>();
+  const todayStr = toISODate(today);
 
   function ensureCash(o: OrderRow): CashState {
     const ccy = (o.currency ?? "EUR").toUpperCase();
@@ -528,6 +571,47 @@ export function replayTransactions(
       const pnlCapital = saleNet - costBasis;
       const pnlTotal = saleNet + dividendsAttributed - costBasis;
 
+      // Inflation-adjusted view: rescale every historical leg (buys,
+      // dividends, fees, sale) to euros at `todayStr` purchasing power. XIRR
+      // is then re-derived on the same dates with the rescaled amounts.
+      const buysReal = adjustFlowsForInflation(buySplit.consumed, todayStr);
+      const divsReal = adjustFlowsForInflation(divSplit.consumed, todayStr);
+      const feesReal = adjustFlowsForInflation(feeSplit.consumed, todayStr);
+      const saleNetReal = adjustForInflation(saleNet, o.tradeDate, todayStr);
+      const costBasisReal = -sumFlows(buysReal);
+      const dividendsAttributedReal = sumFlows(divsReal);
+      const holdingFeesAttributedReal = -sumFlows(feesReal);
+      const cashFlowsCapitalReal: Flow[] = [
+        ...buysReal,
+        { date: o.tradeDate, amount: saleNetReal },
+      ];
+      const cashFlowsTotalReal: Flow[] = [
+        ...buysReal,
+        ...divsReal,
+        { date: o.tradeDate, amount: saleNetReal },
+      ];
+      const cashFlowsCapitalNetFeesReal: Flow[] = [
+        ...buysReal,
+        ...feesReal,
+        { date: o.tradeDate, amount: saleNetReal },
+      ];
+      const cashFlowsTotalNetFeesReal: Flow[] = [
+        ...buysReal,
+        ...divsReal,
+        ...feesReal,
+        { date: o.tradeDate, amount: saleNetReal },
+      ];
+      const pnlCapitalReal = saleNetReal - costBasisReal;
+      const pnlTotalReal =
+        saleNetReal + dividendsAttributedReal - costBasisReal;
+      const pnlCapitalNetFeesReal =
+        saleNetReal - costBasisReal - holdingFeesAttributedReal;
+      const pnlTotalNetFeesReal =
+        saleNetReal +
+        dividendsAttributedReal -
+        costBasisReal -
+        holdingFeesAttributedReal;
+
       const realization: PastRealization = {
         key: line.key,
         isin: line.isin,
@@ -550,6 +634,19 @@ export function replayTransactions(
         xirrTotal: xirr(cashFlowsTotal),
         xirrCapitalNetFees: xirr(cashFlowsCapitalNetFees),
         xirrTotalNetFees: xirr(cashFlowsTotalNetFees),
+        saleNetReal,
+        costBasisReal,
+        capitalRecoveredReal: saleNetReal,
+        dividendsAttributedReal,
+        holdingFeesAttributedReal,
+        pnlCapitalReal,
+        pnlTotalReal,
+        pnlCapitalNetFeesReal,
+        pnlTotalNetFeesReal,
+        xirrCapitalReal: xirr(cashFlowsCapitalReal),
+        xirrTotalReal: xirr(cashFlowsTotalReal),
+        xirrCapitalNetFeesReal: xirr(cashFlowsCapitalNetFeesReal),
+        xirrTotalNetFeesReal: xirr(cashFlowsTotalNetFeesReal),
       };
       realizations.push(realization);
       line.realizations.push(realization);
@@ -615,7 +712,6 @@ export function replayTransactions(
     }
   }
 
-  const todayStr = toISODate(today);
   const positions: ActivePosition[] = [];
 
   for (const line of lines.values()) {
@@ -670,6 +766,58 @@ export function replayTransactions(
     const pnlTotal = valuation + dividendsAttributed - invested;
     const pnlPctCapital = invested > 0 ? pnlCapital / invested : 0;
     const pnlPctTotal = invested > 0 ? pnlTotal / invested : 0;
+
+    // Inflation-adjusted variant: rescale every historical buy, dividend and
+    // fee flow to euros at `todayStr` purchasing power; the valuation flow
+    // already lives in today's euros and is kept unchanged.
+    const buyFlowsReal = adjustFlowsForInflation(line.activeBuyFlows, todayStr);
+    const dividendFlowsReal = adjustFlowsForInflation(
+      line.activeDividendFlows,
+      todayStr,
+    );
+    const holdingFeeFlowsReal = adjustFlowsForInflation(
+      line.activeHoldingFeeFlows,
+      todayStr,
+    );
+    const investedReal = -sumFlows(buyFlowsReal);
+    const dividendsAttributedReal = sumFlows(dividendFlowsReal);
+    const holdingFeesReal = -sumFlows(holdingFeeFlowsReal);
+
+    const cashFlowsCapitalReal: Flow[] = [
+      ...buyFlowsReal,
+      { date: todayStr, amount: valuation },
+    ];
+    const cashFlowsTotalReal: Flow[] = [
+      ...buyFlowsReal,
+      ...dividendFlowsReal,
+      { date: todayStr, amount: valuation },
+    ];
+    const cashFlowsCapitalNetFeesReal: Flow[] = [
+      ...buyFlowsReal,
+      ...holdingFeeFlowsReal,
+      { date: todayStr, amount: valuation },
+    ];
+    const cashFlowsTotalNetFeesReal: Flow[] = [
+      ...buyFlowsReal,
+      ...dividendFlowsReal,
+      ...holdingFeeFlowsReal,
+      { date: todayStr, amount: valuation },
+    ];
+
+    const pnlCapitalReal = valuation - investedReal;
+    const pnlTotalReal = valuation + dividendsAttributedReal - investedReal;
+    const pnlCapitalNetFeesReal =
+      valuation - investedReal - holdingFeesReal;
+    const pnlTotalNetFeesReal =
+      valuation + dividendsAttributedReal - investedReal - holdingFeesReal;
+    const pnlPctCapitalReal =
+      investedReal > 0 ? pnlCapitalReal / investedReal : 0;
+    const pnlPctTotalReal =
+      investedReal > 0 ? pnlTotalReal / investedReal : 0;
+    const pnlPctCapitalNetFeesReal =
+      investedReal > 0 ? pnlCapitalNetFeesReal / investedReal : 0;
+    const pnlPctTotalNetFeesReal =
+      investedReal > 0 ? pnlTotalNetFeesReal / investedReal : 0;
 
     const firstBuyDate = new Date(`${line.firstBuyDate}T00:00:00`);
     const days = Math.max(1, (today.getTime() - firstBuyDate.getTime()) / 86_400_000);
@@ -729,6 +877,25 @@ export function replayTransactions(
       bondMaturityDate: line.bondMaturityDate,
       bondCouponFrequency: line.bondCouponFrequency,
       fxToEur: price?.fxToEur ?? fxByCurrency[line.currency.toUpperCase()] ?? 1,
+      investedReal,
+      dividendsAttributedReal,
+      holdingFeesReal,
+      pnlCapitalReal,
+      pnlTotalReal,
+      pnlCapitalNetFeesReal,
+      pnlTotalNetFeesReal,
+      pnlPctCapitalReal,
+      pnlPctTotalReal,
+      pnlPctCapitalNetFeesReal,
+      pnlPctTotalNetFeesReal,
+      xirrCapitalReal: xirr(cashFlowsCapitalReal),
+      xirrTotalReal: xirr(cashFlowsTotalReal),
+      xirrCapitalNetFeesReal: xirr(cashFlowsCapitalNetFeesReal),
+      xirrTotalNetFeesReal: xirr(cashFlowsTotalNetFeesReal),
+      cashFlowsCapitalReal,
+      cashFlowsTotalReal,
+      cashFlowsCapitalNetFeesReal,
+      cashFlowsTotalNetFeesReal,
     });
   }
 
@@ -753,6 +920,19 @@ export function replayTransactions(
     ];
     const yieldXirr = xirr(flowsForXirr);
     const cashTotalFees = state.feesPaidEur + state.taxPaidEur;
+
+    // Inflation-adjusted view: rescale every historical external flow to
+    // today's euros; the final balance flow already lives in today's euros.
+    // `xirr()` preserves NaN behaviour when fewer than 2 effective flows.
+    const externalFlowsReal = adjustFlowsForInflation(
+      state.externalFlows,
+      todayStr,
+    );
+    const flowsForXirrReal: Flow[] = [
+      ...externalFlowsReal,
+      { date: todayStr, amount: finalValue },
+    ];
+    const yieldXirrReal = xirr(flowsForXirrReal);
 
     positions.push({
       key: state.key,
@@ -808,6 +988,27 @@ export function replayTransactions(
       bondMaturityDate: null,
       bondCouponFrequency: null,
       fxToEur,
+      // Cash scalars stay nominal — interest/fees aren't date-stamped on the
+      // cash state, so they can't be inflated. Only the XIRR uses real flows.
+      investedReal: finalValue,
+      dividendsAttributedReal: state.interestReceivedEur,
+      holdingFeesReal: cashTotalFees,
+      pnlCapitalReal: 0,
+      pnlTotalReal: pnlTotalCash,
+      pnlCapitalNetFeesReal: 0,
+      pnlTotalNetFeesReal: pnlTotalCash,
+      pnlPctCapitalReal: 0,
+      pnlPctTotalReal: 0,
+      pnlPctCapitalNetFeesReal: 0,
+      pnlPctTotalNetFeesReal: 0,
+      xirrCapitalReal: yieldXirrReal,
+      xirrTotalReal: yieldXirrReal,
+      xirrCapitalNetFeesReal: yieldXirrReal,
+      xirrTotalNetFeesReal: yieldXirrReal,
+      cashFlowsCapitalReal: flowsForXirrReal,
+      cashFlowsTotalReal: flowsForXirrReal,
+      cashFlowsCapitalNetFeesReal: flowsForXirrReal,
+      cashFlowsTotalNetFeesReal: flowsForXirrReal,
     });
   }
 

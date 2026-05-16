@@ -2,6 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 
 import type { MovementTotals, PortfolioTotals, RealizationTotals } from "../aggregate";
 import { fmtCcy, fmtSignedCcy, fmtPct } from "../format";
+import { CPI_BASE_YEAR } from "../inflation";
 import { DeltaPill } from "./delta-pill";
 
 type Props =
@@ -11,17 +12,21 @@ type Props =
       pricesUpdatedAt: string | null;
       withDividends?: boolean;
       netOfFees?: boolean;
+      inflationAdjusted?: boolean;
     }
   | {
       view: "realizations";
       totals: RealizationTotals;
       withDividends?: boolean;
       netOfFees?: boolean;
+      inflationAdjusted?: boolean;
     }
   | {
       view: "movements";
       totals: MovementTotals;
     };
+
+const REAL_BADGE = `€ réels · base ${CPI_BASE_YEAR}`;
 
 export function KpiStrip(props: Props) {
   if (props.view === "positions") {
@@ -47,8 +52,10 @@ export type PositionsKpiCopy = {
 // like invested === valuation).
 export function getPositionsKpiCopy(
   totals: PortfolioTotals,
-  opts: { withDividends: boolean; netOfFees: boolean },
+  opts: { withDividends: boolean; netOfFees: boolean; inflationAdjusted?: boolean },
 ): PositionsKpiCopy {
+  const real = opts.inflationAdjusted === true;
+  const realSuffix = real ? ` · ${REAL_BADGE}` : "";
   if (totals.kpiMode === "cash") {
     return {
       investedLabel: "Solde cash courant",
@@ -56,16 +63,18 @@ export function getPositionsKpiCopy(
       valuationLabel: "Valorisation EUR",
       pnlLabel: "Gain net",
       xirrLabel: "PnL annualisé",
-      xirrSubLabel: "Rendement annualisé cash",
+      xirrSubLabel: real ? `Rendement annualisé cash · ${REAL_BADGE}` : "Rendement annualisé cash",
     };
   }
   const mwrBaseLabel = opts.withDividends ? "MWR · avec divs" : "MWR · capital seul";
-  const xirrSubLabel = opts.netOfFees ? `${mwrBaseLabel} · net frais` : mwrBaseLabel;
+  const mwrWithFees = opts.netOfFees ? `${mwrBaseLabel} · net frais` : mwrBaseLabel;
+  const xirrSubLabel = `${mwrWithFees}${realSuffix}`;
   const investedSub =
     `${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}` +
     (totals.holdingFeesTotal > 0
       ? ` · dont ${fmtCcy(totals.holdingFeesTotal, 0)} de droits de garde`
-      : "");
+      : "") +
+    realSuffix;
   return {
     investedLabel: "Capital investi",
     investedSub,
@@ -81,27 +90,49 @@ function PositionsKpis({
   pricesUpdatedAt,
   withDividends = false,
   netOfFees = false,
+  inflationAdjusted = false,
 }: {
   totals: PortfolioTotals;
   pricesUpdatedAt: string | null;
   withDividends?: boolean;
   netOfFees?: boolean;
+  inflationAdjusted?: boolean;
 }) {
-  const basePnl = withDividends ? totals.pnlTotal : totals.pnl;
-  const pnlValue = basePnl - (netOfFees ? totals.holdingFeesTotal : 0);
-  const pnlPctValue = totals.invested > 0 ? pnlValue / totals.invested : 0;
+  const investedValue = inflationAdjusted ? totals.investedReal : totals.invested;
+  let pnlValue: number;
+  if (inflationAdjusted) {
+    pnlValue = netOfFees
+      ? withDividends
+        ? totals.pnlTotalReal - totals.holdingFeesTotalReal
+        : totals.pnlReal - totals.holdingFeesTotalReal
+      : withDividends
+        ? totals.pnlTotalReal
+        : totals.pnlReal;
+  } else {
+    const basePnl = withDividends ? totals.pnlTotal : totals.pnl;
+    pnlValue = basePnl - (netOfFees ? totals.holdingFeesTotal : 0);
+  }
+  const pnlPctValue = investedValue > 0 ? pnlValue / investedValue : 0;
   const xirrValue = netOfFees
     ? withDividends
-      ? totals.xirrTotalNetFees
-      : totals.xirrCapitalNetFees
+      ? inflationAdjusted
+        ? totals.xirrTotalNetFeesReal
+        : totals.xirrTotalNetFees
+      : inflationAdjusted
+        ? totals.xirrCapitalNetFeesReal
+        : totals.xirrCapitalNetFees
     : withDividends
-      ? totals.xirrTotal
-      : totals.xirrCapital;
-  const copy = getPositionsKpiCopy(totals, { withDividends, netOfFees });
+      ? inflationAdjusted
+        ? totals.xirrTotalReal
+        : totals.xirrTotal
+      : inflationAdjusted
+        ? totals.xirrCapitalReal
+        : totals.xirrCapital;
+  const copy = getPositionsKpiCopy(totals, { withDividends, netOfFees, inflationAdjusted });
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Kpi label={copy.investedLabel} value={fmtCcy(totals.invested, 0)} sub={copy.investedSub} />
+      <Kpi label={copy.investedLabel} value={fmtCcy(investedValue, 0)} sub={copy.investedSub} />
       <Kpi
         label={copy.valuationLabel}
         value={fmtCcy(totals.valuation, 0)}
@@ -141,35 +172,67 @@ function RealizationsKpis({
   totals,
   withDividends = false,
   netOfFees = false,
+  inflationAdjusted = false,
 }: {
   totals: RealizationTotals;
   withDividends?: boolean;
   netOfFees?: boolean;
+  inflationAdjusted?: boolean;
 }) {
-  const pnlValue = withDividends ? totals.pnlTotal : totals.pnlCapital;
+  const capitalRecovered = inflationAdjusted
+    ? totals.capitalRecoveredReal
+    : totals.capitalRecovered;
+  const costBasis = inflationAdjusted ? totals.costBasisReal : totals.costBasis;
+  const pnlValue = inflationAdjusted
+    ? netOfFees
+      ? withDividends
+        ? totals.pnlTotalNetFeesReal
+        : totals.pnlCapitalNetFeesReal
+      : withDividends
+        ? totals.pnlTotalReal
+        : totals.pnlCapitalReal
+    : withDividends
+      ? totals.pnlTotal
+      : totals.pnlCapital;
   const xirrValue = netOfFees
     ? withDividends
-      ? totals.xirrTotalNetFees
-      : totals.xirrCapitalNetFees
+      ? inflationAdjusted
+        ? totals.xirrTotalNetFeesReal
+        : totals.xirrTotalNetFees
+      : inflationAdjusted
+        ? totals.xirrCapitalNetFeesReal
+        : totals.xirrCapitalNetFees
     : withDividends
-      ? totals.xirrTotal
-      : totals.xirrCapital;
+      ? inflationAdjusted
+        ? totals.xirrTotalReal
+        : totals.xirrTotal
+      : inflationAdjusted
+        ? totals.xirrCapitalReal
+        : totals.xirrCapital;
   const xirrBaseLabel = withDividends ? "XIRR · avec divs" : "XIRR · capital seul";
-  const xirrSubLabel = netOfFees ? `${xirrBaseLabel} · net frais` : xirrBaseLabel;
-  const countSub = `${totals.count} réalisation${totals.count > 1 ? "s" : ""}`;
-  const pnlPct = totals.costBasis > 0 ? pnlValue / totals.costBasis : 0;
+  const xirrWithFees = netOfFees ? `${xirrBaseLabel} · net frais` : xirrBaseLabel;
+  const xirrSubLabel = inflationAdjusted
+    ? `${xirrWithFees} · ${REAL_BADGE}`
+    : xirrWithFees;
+  const countSub = inflationAdjusted
+    ? `${totals.count} réalisation${totals.count > 1 ? "s" : ""} · ${REAL_BADGE}`
+    : `${totals.count} réalisation${totals.count > 1 ? "s" : ""}`;
+  const costBasisSub = inflationAdjusted
+    ? `Base de coût cédée · ${REAL_BADGE}`
+    : "Base de coût cédée";
+  const pnlPct = costBasis > 0 ? pnlValue / costBasis : 0;
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Kpi
         label="Capital récupéré"
-        value={fmtCcy(totals.capitalRecovered, 0)}
+        value={fmtCcy(capitalRecovered, 0)}
         sub={countSub}
       />
       <Kpi
         label="Coût des ventes"
-        value={fmtCcy(totals.costBasis, 0)}
-        sub="Base de coût cédée"
+        value={fmtCcy(costBasis, 0)}
+        sub={costBasisSub}
       />
       <Kpi
         label="PnL réalisé"
