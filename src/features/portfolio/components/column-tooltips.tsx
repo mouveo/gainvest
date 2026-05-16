@@ -69,7 +69,9 @@ export const POSITION_TOOLTIPS: Record<string, React.ReactNode> = {
     "Droits de garde + commissions récurrentes attribués à cette ligne (typiquement 0,036 %/an sur les positions hors Euronext en CTO Bourse Direct). N'impactent PAS le PRU CUMP mais peuvent diminuer le PnL via le toggle « Net des frais ».",
   pnl: (
     <>
-      Plus-value latente <strong>capital seul</strong> (sans dividendes), en EUR.
+      Plus-value latente <strong>capital seul, sans dividendes</strong>, en EUR. Toujours
+      affichée ainsi (indépendamment du toggle « Inclure dividendes ») pour rester
+      distincte de « PnL total ».
       <br />
       {muted("Formule : Valorisation − Investi.")}
     </>

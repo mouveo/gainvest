@@ -438,9 +438,18 @@ export function PositionsTable({
         id: "pnl",
         accessorFn: (p) => {
           if (p.assetClass === "cash") {
+            // Cash : pas de notion "capital seul" — les intérêts SONT le PnL.
             return inflationAdjusted ? p.pnlTotalReal : p.pnlTotal;
           }
-          return pickPnlValue(p, { withDividends, netOfFees, inflationAdjusted });
+          // PnL = capital seul (sans divs) toujours. Le toggle "Inclure
+          // dividendes" affecte KPIs + PnL % + PnL annualisé, mais cette
+          // colonne reste fixe pour que "PnL" et "PnL total" gardent des
+          // sémantiques distinctes côte à côte.
+          return pickPnlValue(p, {
+            withDividends: false,
+            netOfFees,
+            inflationAdjusted,
+          });
         },
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title={`PnL${realSuffix}`} tooltip={POSITION_TOOLTIPS.pnl} align="right" />
