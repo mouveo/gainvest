@@ -437,14 +437,13 @@ export function PositionsTable({
       {
         id: "pnl",
         accessorFn: (p) => {
-          if (p.assetClass === "cash") {
-            // Cash : pas de notion "capital seul" — les intérêts SONT le PnL.
-            return inflationAdjusted ? p.pnlTotalReal : p.pnlTotal;
-          }
-          // PnL = capital seul (sans divs) toujours. Le toggle "Inclure
-          // dividendes" affecte KPIs + PnL % + PnL annualisé, mais cette
-          // colonne reste fixe pour que "PnL" et "PnL total" gardent des
-          // sémantiques distinctes côte à côte.
+          // PnL = capital seul (sans divs/intérêts) toujours, pour TOUS les
+          // assets. Le toggle "Inclure dividendes" affecte KPIs + PnL % + PnL
+          // annualisé, mais cette colonne reste fixe pour que "PnL" et "PnL
+          // total" gardent des sémantiques distinctes côte à côte. Sur cash,
+          // pnlCapital vaut 0 par construction (= pas de plus-value capital
+          // sur un solde cash) — c'est correct et lisible, l'intérêt reçu
+          // apparaît dans "PnL total".
           return pickPnlValue(p, {
             withDividends: false,
             netOfFees,

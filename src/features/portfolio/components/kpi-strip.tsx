@@ -43,6 +43,7 @@ export type PositionsKpiCopy = {
   investedSub: string;
   valuationLabel: string;
   pnlLabel: string;
+  pnlSubLabel: string;
   xirrLabel: string;
   xirrSubLabel: string;
 };
@@ -62,6 +63,8 @@ export function getPositionsKpiCopy(
       investedSub: `${totals.lines} ligne(s) · frais & taxes cumulés ${fmtCcy(totals.holdingFeesTotal, 0)}`,
       valuationLabel: "Valorisation EUR",
       pnlLabel: "Gain net",
+      // Sur cash, le PnL = intérêts − frais − taxes (pas de notion capital/divs).
+      pnlSubLabel: real ? `intérêts nets · ${REAL_BADGE}` : "intérêts nets",
       xirrLabel: "PnL annualisé",
       xirrSubLabel: real ? `Rendement annualisé cash · ${REAL_BADGE}` : "Rendement annualisé cash",
     };
@@ -69,6 +72,12 @@ export function getPositionsKpiCopy(
   const mwrBaseLabel = opts.withDividends ? "MWR · avec divs" : "MWR · capital seul";
   const mwrWithFees = opts.netOfFees ? `${mwrBaseLabel} · net frais` : mwrBaseLabel;
   const xirrSubLabel = `${mwrWithFees}${realSuffix}`;
+  // Sub-label de PnL latent symétrique au MWR : révèle clairement l'état des
+  // toggles pour que l'utilisateur sache si la carte affiche capital seul,
+  // capital+divs, ou la variante net frais.
+  const pnlBaseLabel = opts.withDividends ? "avec divs" : "capital seul";
+  const pnlSubMode = opts.netOfFees ? `${pnlBaseLabel} · net frais` : pnlBaseLabel;
+  const pnlSubLabel = `${pnlSubMode}${realSuffix}`;
   const investedSub =
     `${totals.lines} ligne${totals.lines > 1 ? "s" : ""} · frais cumulés ${fmtCcy(totals.totalFees, 0)}` +
     (totals.holdingFeesTotal > 0
@@ -80,6 +89,7 @@ export function getPositionsKpiCopy(
     investedSub,
     valuationLabel: "Valorisation",
     pnlLabel: "PnL latent",
+    pnlSubLabel,
     xirrLabel: "PnL annualisé",
     xirrSubLabel,
   };
@@ -148,7 +158,7 @@ function PositionsKpis({
         }
         sub={
           <span className="inline-flex items-center gap-1">
-            <DeltaPill value={pnlPctValue} /> total
+            <DeltaPill value={pnlPctValue} /> {copy.pnlSubLabel}
           </span>
         }
       />
@@ -214,6 +224,11 @@ function RealizationsKpis({
   const xirrSubLabel = inflationAdjusted
     ? `${xirrWithFees} · ${REAL_BADGE}`
     : xirrWithFees;
+  // Sub-label PnL réalisé symétrique : révèle l'état des toggles plutôt
+  // que d'afficher un "total" générique trompeur.
+  const pnlBaseLabel = withDividends ? "avec divs" : "capital seul";
+  const pnlWithFees = netOfFees ? `${pnlBaseLabel} · net frais` : pnlBaseLabel;
+  const pnlSubLabel = inflationAdjusted ? `${pnlWithFees} · ${REAL_BADGE}` : pnlWithFees;
   const countSub = inflationAdjusted
     ? `${totals.count} réalisation${totals.count > 1 ? "s" : ""} · ${REAL_BADGE}`
     : `${totals.count} réalisation${totals.count > 1 ? "s" : ""}`;
@@ -242,7 +257,7 @@ function RealizationsKpis({
         }
         sub={
           <span className="inline-flex items-center gap-1">
-            <DeltaPill value={pnlPct} /> total
+            <DeltaPill value={pnlPct} /> {pnlSubLabel}
           </span>
         }
       />
