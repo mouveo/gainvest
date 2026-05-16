@@ -13,6 +13,7 @@ import { fmtCcy, fmtDateFR, fmtInt, fmtNum, fmtPct } from "../format";
 import { ASSET_CLASS_FACETED_OPTIONS, labelAssetClass } from "../labels";
 import type { PastRealization } from "../realize";
 import { SUPPORTS } from "../types";
+import { REALIZATION_TOOLTIPS } from "./column-tooltips";
 import { ColumnsPicker } from "./columns/columns-picker";
 import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
@@ -126,14 +127,14 @@ export function RealizationsTable({
       {
         id: "saleDate",
         accessorFn: (r) => r.saleDate,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Date de vente" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Date de vente" tooltip={REALIZATION_TOOLTIPS.saleDate} />,
         cell: ({ row }) => fmtDateFR(row.original.saleDate),
         filterFn: "dateRange",
       },
       {
         id: "instrument",
         accessorFn: (r) => r.instrumentName,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" tooltip={REALIZATION_TOOLTIPS.instrument} />,
         cell: ({ row }) => {
           const r = row.original;
           return (
@@ -176,7 +177,7 @@ export function RealizationsTable({
         id: "qtySold",
         accessorFn: (r) => r.saleQty,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Quantité vendue" align="right" />
+          <DataTableColumnHeader column={column} title="Quantité vendue" tooltip={REALIZATION_TOOLTIPS.qtySold} align="right" />
         ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">{fmtInt(row.original.saleQty)}</div>
@@ -186,7 +187,7 @@ export function RealizationsTable({
         id: "pruAtSale",
         accessorFn: (r) => r.pruAtSale,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Prix d'achat / action" align="right" />
+          <DataTableColumnHeader column={column} title="Prix d'achat / action" tooltip={REALIZATION_TOOLTIPS.pruAtSale} align="right" />
         ),
         cell: ({ row }) => {
           const v = row.original.pruAtSale;
@@ -201,7 +202,7 @@ export function RealizationsTable({
         id: "salePrice",
         accessorFn: (r) => salePricePerShare(r),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Prix de vente / action" align="right" />
+          <DataTableColumnHeader column={column} title="Prix de vente / action" tooltip={REALIZATION_TOOLTIPS.salePrice} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -216,7 +217,7 @@ export function RealizationsTable({
         id: "currentPrice",
         accessorFn: (r) => priceByIsin[r.isin]?.eur ?? Number.NaN,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Cours actuel" align="right" />
+          <DataTableColumnHeader column={column} title="Cours actuel" tooltip={REALIZATION_TOOLTIPS.currentPrice} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -250,7 +251,7 @@ export function RealizationsTable({
           return (cp - sp) / sp;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Spread après vente" align="right" />
+          <DataTableColumnHeader column={column} title="Spread après vente" tooltip={REALIZATION_TOOLTIPS.spread} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -278,7 +279,7 @@ export function RealizationsTable({
         id: "saleNet",
         accessorFn: (r) => (inflationAdjusted ? r.saleNetReal : r.saleNet),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`Encaissé net${realSuffix}`} align="right" />
+          <DataTableColumnHeader column={column} title={`Encaissé net${realSuffix}`} tooltip={REALIZATION_TOOLTIPS.saleNet} align="right" />
         ),
         cell: ({ row }) => {
           const v = inflationAdjusted ? row.original.saleNetReal : row.original.saleNet;
@@ -292,7 +293,7 @@ export function RealizationsTable({
         accessorFn: (r) =>
           inflationAdjusted ? r.dividendsAttributedReal : r.dividendsAttributed,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`Dividendes attribués${realSuffix}`} align="right" />
+          <DataTableColumnHeader column={column} title={`Dividendes attribués${realSuffix}`} tooltip={REALIZATION_TOOLTIPS.dividends} align="right" />
         ),
         cell: ({ row }) => {
           const v = inflationAdjusted
@@ -312,7 +313,7 @@ export function RealizationsTable({
         header: ({ column }) => (
           <DataTableColumnHeader
             column={column}
-            title={`Frais de détention attribués${realSuffix}`}
+            title={`Frais de détention attribués${realSuffix}`} tooltip={REALIZATION_TOOLTIPS.holdingFees}
             align="right"
           />
         ),
@@ -344,7 +345,7 @@ export function RealizationsTable({
           return withDividends ? r.pnlTotal : r.pnlCapital;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`Réalisé total${realSuffix}`} align="right" />
+          <DataTableColumnHeader column={column} title={`Réalisé total${realSuffix}`} tooltip={REALIZATION_TOOLTIPS.realizedTotal} align="right" />
         ),
         cell: ({ getValue }) => (
           <div className="text-right">
@@ -373,7 +374,7 @@ export function RealizationsTable({
           return Number.isFinite(v) ? v : Number.NaN;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`XIRR${realSuffix}`} align="right" />
+          <DataTableColumnHeader column={column} title={`XIRR${realSuffix}`} tooltip={REALIZATION_TOOLTIPS.xirr} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();

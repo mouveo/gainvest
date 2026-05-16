@@ -103,10 +103,19 @@ export async function getOrders(active?: ActiveAccount): Promise<OrderRow[]> {
       preferredCurrency = instrument.preferred_currency ?? null;
       instrumentName = instrument.name;
       assetClass = instrument.asset_class;
-      // For cash flows we keep the row's native currency (the row may be in
-      // USD even when the instrument it references is EUR-denominated for
-      // example). Native arithmetic + per-row fxRate handles the EUR view.
-      currency = row.currency ?? instrument.currency;
+      // For tradable rows (buy/sell/dividend) we use the instrument's native
+      // currency — more authoritative than `row.currency` which is a snapshot
+      // taken at import time (OpenFIGI returned a GBP/LSE listing, then the
+      // user locked an EUR/Xetra one via the listing picker; the tx row never
+      // got updated). For cash flows (deposit/withdrawal/interest/tax/fee) we
+      // keep the row's currency: a USD deposit is genuinely in USD regardless
+      // of any instrument.
+      const isCashFlow = ["deposit", "withdrawal", "interest", "tax", "fee"].includes(
+        row.kind,
+      );
+      currency = isCashFlow
+        ? (row.currency ?? instrument.currency)
+        : (instrument.preferred_currency ?? instrument.currency);
       bondCouponRate =
         instrument.bond_coupon_rate == null ? null : Number(instrument.bond_coupon_rate);
       bondMaturityDate = instrument.bond_maturity_date ?? null;

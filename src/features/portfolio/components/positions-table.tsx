@@ -24,6 +24,7 @@ import { fmtCcy, fmtDateFR, fmtInt, fmtNum } from "../format";
 import { ASSET_CLASS_FACETED_OPTIONS, labelAssetClass } from "../labels";
 import { SUPPORTS } from "../types";
 import { BondDetailsModal } from "./bond-details-modal";
+import { POSITION_TOOLTIPS } from "./column-tooltips";
 import { ColumnsPicker } from "./columns/columns-picker";
 import type { ColumnDef as PickerColumnDef } from "./columns/types";
 import { useVisibleColumns } from "./columns/use-visible-columns";
@@ -94,105 +95,6 @@ const DashCell = (
   <div className="text-muted-foreground text-right font-mono tabular-nums">—</div>
 );
 
-// Bulles d'information vulgarisées par colonne (hover sur l'icône ⓘ).
-// Si tu changes une formule en code, mets à jour la bulle ici aussi.
-const COLUMN_TOOLTIPS: Partial<Record<PositionColKey, React.ReactNode>> = {
-  instrument: "Nom court de l'instrument + ISIN (ou ticker pour cryptos) et devise native.",
-  support:
-    "Enveloppe fiscale : CTO (compte-titres ordinaire, PFU 30 %), PEA (5 ans = exo IR, PS 17,2 %), PEA-PME, AV (assurance-vie), CRYPTO (art. 150 VH bis CGI).",
-  type: "Classe d'actif : Action, ETF, Fonds, Obligation, Cash, Crypto.",
-  operateur:
-    "Courtier où la transaction a été passée. Le PRU est calculé séparément par broker (CUMP par compte-titres pour conformité fiscale).",
-  qty:
-    "Nombre d'unités détenues actuellement. Actions/ETF : nombre de titres. Obligations : face value en devise native. Cryptos : quantité (jusqu'à 8 décimales). Cash : solde dans la devise.",
-  pru: (
-    <>
-      <strong>Prix de Revient Unitaire</strong> — prix moyen pondéré d'acquisition, frais d'achat
-      capitalisés. Méthode CUMP fongible conforme art. 150-0 D, 3 CGI.
-      <br />
-      <span className="text-muted-foreground">
-        Formule : Σ (qty × prix + commissions) / Σ qty. Diminue proportionnellement à chaque vente.
-      </span>
-    </>
-  ),
-  pruGross: (
-    <>
-      PRU sans les frais d'achat capitalisés (vue pédagogique).
-      <br />
-      <span className="text-muted-foreground">Formule : Σ (qty × prix) / Σ qty.</span>
-    </>
-  ),
-  currentPrice:
-    "Prix unitaire converti en EUR au taux de change du jour, depuis le dernier rafraîchissement. Source : EODHD (actions/ETF/obligations) ou CoinGecko (cryptos). Cliquable pour saisir manuellement (utile si la cotation auto est cassée).",
-  currentPriceNative:
-    "Prix unitaire dans la devise native de l'instrument (USD pour Apple, GBP pour les ETF LSE…). Permet de comparer directement avec ce qu'affiche le broker, sans biais lié au taux de change.",
-  listing:
-    "Place de cotation (MIC ISO 10383) + devise utilisées pour récupérer le cours. Cliquer pour verrouiller manuellement une place spécifique (utile quand un ISIN est coté sur plusieurs marchés).",
-  invested: (
-    <>
-      Capital actuellement engagé sur cette ligne, en EUR.
-      <br />
-      <span className="text-muted-foreground">
-        Formule : quantité × PRU. Diminue proportionnellement quand tu vends.
-      </span>
-    </>
-  ),
-  valuation: (
-    <>
-      Valeur de marché actuelle de la position en EUR.
-      <br />
-      <span className="text-muted-foreground">
-        Formule : quantité × cours actuel × taux de change.
-      </span>
-    </>
-  ),
-  dividendsAttributed:
-    "Total des dividendes (actions/ETF), coupons (obligations) ou intérêts (cash) attribués à la portion encore détenue, en EUR. Quand tu vends, la part vendue emporte sa quote-part historique.",
-  divYieldAnnualized: (
-    <>
-      Rendement annualisé issu des seuls dividendes reçus (= <strong>yield on cost</strong>).
-      Comparable directement à un livret ou un CAT.
-      <br />
-      <span className="text-muted-foreground">
-        Formule : (Σ divs reçus / années de détention) / capital investi.
-      </span>
-    </>
-  ),
-  holdingFees:
-    "Droits de garde + commissions récurrentes attribués à cette ligne (typiquement 0,036 %/an sur les positions hors Euronext en CTO Bourse Direct). N'impactent PAS le PRU CUMP mais peuvent diminuer le PnL via le toggle « Net des frais ».",
-  pnl: (
-    <>
-      Plus-value latente <strong>capital seul</strong> (sans dividendes), en EUR.
-      <br />
-      <span className="text-muted-foreground">Formule : Valorisation − Investi.</span>
-    </>
-  ),
-  pnlTotal: (
-    <>
-      Plus-value latente <strong>incluant les dividendes</strong> reçus.
-      <br />
-      <span className="text-muted-foreground">Formule : Valorisation + Dividendes − Investi.</span>
-    </>
-  ),
-  pnlPct: (
-    <>
-      PnL en pourcentage du capital investi.
-      <br />
-      <span className="text-muted-foreground">
-        Formule : PnL / Investi. Bascule entre vue capital seul et avec dividendes selon les
-        toggles du haut.
-      </span>
-    </>
-  ),
-  pnlAnnualized: (
-    <>
-      <strong>MWR (Money-Weighted Return)</strong> = TRI annualisé sur les vrais flux de
-      trésorerie (achats, ventes, divs, frais). Méthode Newton-Raphson + bisection fallback.
-      Comparable à un taux d'épargne, un CAT ou un ETF monde.
-    </>
-  ),
-  held: "Temps écoulé depuis le premier achat de cette position.",
-};
 
 function migratePositionsVisibilityKey(): void {
   if (typeof window === "undefined") return;
@@ -258,7 +160,7 @@ export function PositionsTable({
       {
         id: "instrument",
         accessorFn: (p) => p.instrumentName,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" tooltip={COLUMN_TOOLTIPS.instrument} />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" tooltip={POSITION_TOOLTIPS.instrument} />,
         cell: ({ row }) => {
           const p = row.original;
           const isCash = p.assetClass === "cash";
@@ -326,7 +228,7 @@ export function PositionsTable({
         id: "qty",
         accessorFn: (p) => p.qty,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Quantité" tooltip={COLUMN_TOOLTIPS.qty} align="right" />
+          <DataTableColumnHeader column={column} title="Quantité" tooltip={POSITION_TOOLTIPS.qty} align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original;
@@ -349,7 +251,7 @@ export function PositionsTable({
         id: "pru",
         accessorFn: (p) => (p.assetClass === "bond" && p.pruPctPar != null ? p.pruPctPar : p.pru),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PRU" tooltip={COLUMN_TOOLTIPS.pru} align="right" />
+          <DataTableColumnHeader column={column} title="PRU" tooltip={POSITION_TOOLTIPS.pru} align="right" />
         ),
         cell: ({ row }) => {
           const cell = pruCell(row.original);
@@ -363,7 +265,7 @@ export function PositionsTable({
         id: "pruGross",
         accessorFn: (p) => p.pruGross,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PRU brut" tooltip={COLUMN_TOOLTIPS.pruGross} align="right" />
+          <DataTableColumnHeader column={column} title="PRU brut" tooltip={POSITION_TOOLTIPS.pruGross} align="right" />
         ),
         cell: ({ row }) => {
           const cell = pruGrossCell(row.original);
@@ -380,7 +282,7 @@ export function PositionsTable({
         accessorFn: (p) =>
           p.assetClass === "bond" && p.currentPctPar != null ? p.currentPctPar : p.currentPrice,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Cours actuel" tooltip={COLUMN_TOOLTIPS.currentPrice} align="right" />
+          <DataTableColumnHeader column={column} title="Cours actuel" tooltip={POSITION_TOOLTIPS.currentPrice} align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original;
@@ -402,7 +304,7 @@ export function PositionsTable({
         id: "currentPriceNative",
         accessorFn: (p) => p.currentPriceNative ?? Number.NaN,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Cours natif" tooltip={COLUMN_TOOLTIPS.currentPriceNative} align="right" />
+          <DataTableColumnHeader column={column} title="Cours natif" tooltip={POSITION_TOOLTIPS.currentPriceNative} align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original;
@@ -455,7 +357,7 @@ export function PositionsTable({
         id: "invested",
         accessorFn: (p) => (inflationAdjusted ? p.investedReal : p.invested),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`Investi${realSuffix}`} tooltip={COLUMN_TOOLTIPS.invested} align="right" />
+          <DataTableColumnHeader column={column} title={`Investi${realSuffix}`} tooltip={POSITION_TOOLTIPS.invested} align="right" />
         ),
         cell: ({ row }) => {
           const v = inflationAdjusted ? row.original.investedReal : row.original.invested;
@@ -466,7 +368,7 @@ export function PositionsTable({
         id: "valuation",
         accessorFn: (p) => p.valuation,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Valorisation" tooltip={COLUMN_TOOLTIPS.valuation} align="right" />
+          <DataTableColumnHeader column={column} title="Valorisation" tooltip={POSITION_TOOLTIPS.valuation} align="right" />
         ),
         cell: ({ row }) => (
           <div className="text-right font-mono font-medium tabular-nums">
@@ -478,7 +380,7 @@ export function PositionsTable({
         id: "dividendsAttributed",
         accessorFn: (p) => p.dividendsAttributed,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Dividendes" tooltip={COLUMN_TOOLTIPS.dividendsAttributed} align="right" />
+          <DataTableColumnHeader column={column} title="Dividendes" tooltip={POSITION_TOOLTIPS.dividendsAttributed} align="right" />
         ),
         cell: ({ row }) => {
           const v = row.original.dividendsAttributed;
@@ -503,7 +405,7 @@ export function PositionsTable({
           return av - bv;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Rendement divs" tooltip={COLUMN_TOOLTIPS.divYieldAnnualized} align="right" />
+          <DataTableColumnHeader column={column} title="Rendement divs" tooltip={POSITION_TOOLTIPS.divYieldAnnualized} align="right" />
         ),
         cell: ({ row }) => {
           const v = row.original.divYieldAnnualized;
@@ -519,7 +421,7 @@ export function PositionsTable({
         id: "holdingFees",
         accessorFn: (p) => p.holdingFees,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Frais de détention" tooltip={COLUMN_TOOLTIPS.holdingFees} align="right" />
+          <DataTableColumnHeader column={column} title="Frais de détention" tooltip={POSITION_TOOLTIPS.holdingFees} align="right" />
         ),
         cell: ({ row }) => {
           const cell = holdingFeesCell(row.original);
@@ -541,7 +443,7 @@ export function PositionsTable({
           return pickPnlValue(p, { withDividends, netOfFees, inflationAdjusted });
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`PnL${realSuffix}`} tooltip={COLUMN_TOOLTIPS.pnl} align="right" />
+          <DataTableColumnHeader column={column} title={`PnL${realSuffix}`} tooltip={POSITION_TOOLTIPS.pnl} align="right" />
         ),
         cell: ({ getValue }) => (
           <div className="text-right">
@@ -554,7 +456,7 @@ export function PositionsTable({
         accessorFn: (p) =>
           pickPnlValue(p, { withDividends: true, netOfFees, inflationAdjusted }),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`PnL total${realSuffix}`} tooltip={COLUMN_TOOLTIPS.pnlTotal} align="right" />
+          <DataTableColumnHeader column={column} title={`PnL total${realSuffix}`} tooltip={POSITION_TOOLTIPS.pnlTotal} align="right" />
         ),
         cell: ({ getValue }) => (
           <div className="text-right">
@@ -569,7 +471,7 @@ export function PositionsTable({
           return cell.kind === "pct" ? cell.value : Number.NaN;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`PnL %${realSuffix}`} tooltip={COLUMN_TOOLTIPS.pnlPct} align="right" />
+          <DataTableColumnHeader column={column} title={`PnL %${realSuffix}`} tooltip={POSITION_TOOLTIPS.pnlPct} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -598,7 +500,7 @@ export function PositionsTable({
           return av - bv;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={`PnL annualisé${realSuffix}`} tooltip={COLUMN_TOOLTIPS.pnlAnnualized} align="right" />
+          <DataTableColumnHeader column={column} title={`PnL annualisé${realSuffix}`} tooltip={POSITION_TOOLTIPS.pnlAnnualized} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -615,7 +517,7 @@ export function PositionsTable({
         id: "held",
         accessorFn: (p) => p.yearsHeld,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Durée de détention" tooltip={COLUMN_TOOLTIPS.held} align="right" />
+          <DataTableColumnHeader column={column} title="Durée de détention" tooltip={POSITION_TOOLTIPS.held} align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original;

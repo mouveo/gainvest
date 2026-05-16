@@ -3,6 +3,7 @@
 import { Trash2 } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
+import { MOVEMENT_TOOLTIPS } from "./column-tooltips";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -160,7 +161,7 @@ export function MovementsTable({
       {
         id: "date",
         accessorFn: (o) => o.tradeDate,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Date" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Date" tooltip={MOVEMENT_TOOLTIPS.date} />,
         cell: ({ row }) => {
           const o = row.original;
           return (
@@ -182,7 +183,7 @@ export function MovementsTable({
       {
         id: "instrument",
         accessorFn: (o) => o.instrumentName,
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Instrument" tooltip={MOVEMENT_TOOLTIPS.instrument} />,
         cell: ({ row }) => {
           const o = row.original;
           return (
@@ -217,7 +218,7 @@ export function MovementsTable({
         id: "quantite",
         accessorFn: (o) => o.quantity ?? Number.NaN,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Quantité" align="right" />
+          <DataTableColumnHeader column={column} title="Quantité" tooltip={MOVEMENT_TOOLTIPS.quantite} align="right" />
         ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
@@ -229,7 +230,7 @@ export function MovementsTable({
         id: "prix",
         accessorFn: (o) => o.price ?? Number.NaN,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Prix" align="right" />
+          <DataTableColumnHeader column={column} title="Prix" tooltip={MOVEMENT_TOOLTIPS.prix} align="right" />
         ),
         cell: ({ row }) => {
           const p = row.original.price;
@@ -244,7 +245,7 @@ export function MovementsTable({
         id: "valeur",
         accessorFn: (o) => o.grossAmount,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Montant brut" align="right" />
+          <DataTableColumnHeader column={column} title="Montant brut" tooltip={MOVEMENT_TOOLTIPS.valeur} align="right" />
         ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">
@@ -256,7 +257,7 @@ export function MovementsTable({
         id: "frais",
         accessorFn: (o) => o.fees,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Frais" align="right" />
+          <DataTableColumnHeader column={column} title="Frais" tooltip={MOVEMENT_TOOLTIPS.frais} align="right" />
         ),
         cell: ({ row }) => (
           <div className="text-right font-mono tabular-nums">{fmtCcy(row.original.fees, 2)}</div>
@@ -265,7 +266,7 @@ export function MovementsTable({
       {
         id: "pays",
         accessorFn: (o) => countryFromIsin(o.isin),
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Pays" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Pays" tooltip={MOVEMENT_TOOLTIPS.pays} />,
         cell: ({ getValue }) => (
           <span className="font-mono text-sm tracking-wide">{getValue<string>()}</span>
         ),
@@ -274,7 +275,7 @@ export function MovementsTable({
       {
         id: "operateur",
         accessorFn: (o) => o.broker ?? "—",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Opérateur" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Opérateur" tooltip={MOVEMENT_TOOLTIPS.operateur} />,
         cell: ({ row }) => <span className="text-sm">{row.original.broker ?? "—"}</span>,
         enableSorting: false,
         filterFn: "multiSelect",
