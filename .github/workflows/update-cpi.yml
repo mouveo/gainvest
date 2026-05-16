@@ -1,0 +1,34 @@
+name: Update INSEE CPI dataset
+
+on:
+  workflow_dispatch:
+  schedule:
+    # INSEE publishes the monthly IPC mid-month. Run on the 17th at 12:00 UTC.
+    - cron: "0 12 17 * *"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: node scripts/fetch-cpi.mjs
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- src/data/cpi-france.json; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/data/cpi-france.json
+          git commit -m "chore(cpi): refresh INSEE IPC France"
+          git push
