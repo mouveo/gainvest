@@ -52,6 +52,7 @@ type PositionColKey =
   | "pru"
   | "pruGross"
   | "currentPrice"
+  | "currentPriceNative"
   | "listing"
   | "invested"
   | "valuation"
@@ -75,6 +76,7 @@ const POSITION_COLUMNS: readonly PickerColumnDef<PositionColKey>[] = [
   { key: "pru", label: "PRU", num: true, defaultVisible: true },
   { key: "pruGross", label: "PRU brut", num: true, defaultVisible: false },
   { key: "currentPrice", label: "Cours actuel", num: true, defaultVisible: true },
+  { key: "currentPriceNative", label: "Cours natif", num: true, defaultVisible: true },
   { key: "listing", label: "Cotation", defaultVisible: true },
   { key: "invested", label: "Investi", num: true, defaultVisible: true },
   { key: "valuation", label: "Valorisation", num: true, defaultVisible: true },
@@ -293,6 +295,28 @@ export function PositionsTable({
           }
           return (
             <div className="text-right font-mono tabular-nums">{cell.text}</div>
+          );
+        },
+      },
+      {
+        id: "currentPriceNative",
+        accessorFn: (p) => p.currentPriceNative ?? Number.NaN,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Cours natif" align="right" />
+        ),
+        cell: ({ row }) => {
+          const p = row.original;
+          // Cash / bond / pas de native price → tiret.
+          if (p.assetClass === "cash" || p.assetClass === "bond") return DashCell;
+          if (p.currentPriceNative == null || !Number.isFinite(p.currentPriceNative)) {
+            return DashCell;
+          }
+          const dp = p.currentPriceNative < 1 ? 6 : p.currentPriceNative < 100 ? 4 : 2;
+          return (
+            <div className="text-right font-mono tabular-nums">
+              {fmtNum(p.currentPriceNative, dp)}{" "}
+              <span className="text-muted-foreground text-xs">{p.currency}</span>
+            </div>
           );
         },
       },

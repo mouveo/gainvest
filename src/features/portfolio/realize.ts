@@ -40,6 +40,9 @@ export type ActivePosition = {
   // native % of par quote (mirroring `currentPctPar`) — bond valuation needs
   // the % of par + FX + nominal qty, not a single EUR-per-unit number.
   currentPrice: number;
+  // Native unit price (e.g. AAPL=300.23 USD). Null when the quote provider
+  // didn't yield a native value. Always paired with `currency` to interpret.
+  currentPriceNative: number | null;
   // Bond-only — explicit "% of par" view of both the weighted-average buy
   // price (`pruPctPar`) and the current quote (`currentPctPar`). Null for
   // every other asset class.
@@ -846,6 +849,7 @@ export function replayTransactions(
       investedGross,
       pnlCapitalGross,
       currentPrice,
+      currentPriceNative: price?.native ?? null,
       pruPctPar,
       currentPctPar,
       valuation,
@@ -953,6 +957,8 @@ export function replayTransactions(
       investedGross: finalValue,
       pnlCapitalGross: 0,
       currentPrice: fxToEur,
+      // Cash : prix natif = 1 dans sa propre devise (1 USD = 1 USD).
+      currentPriceNative: 1,
       pruPctPar: null,
       currentPctPar: null,
       valuation: finalValue,

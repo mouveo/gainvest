@@ -118,6 +118,10 @@ export type Position = {
   investedGross: number;
   pnlCapitalGross: number;
   currentPrice: number;
+  // Prix natif (e.g. AAPL=300.23 USD). Affiché à côté du cours EUR converti
+  // pour comparer facilement avec ce que montre le broker. Null si le quote
+  // provider n'a pas renvoyé de native.
+  currentPriceNative: number | null;
   valuation: number;
   invested: number;
   // For bonds, `currentPrice` is the native quote in % of par and `currentPctPar`
@@ -212,6 +216,7 @@ function activeToPosition(p: ActivePosition): Position {
     investedGross: p.investedGross,
     pnlCapitalGross: p.pnlCapitalGross,
     currentPrice: p.currentPrice,
+    currentPriceNative: p.currentPriceNative,
     pruPctPar: p.pruPctPar,
     currentPctPar: p.currentPctPar,
     valuation: p.valuation,

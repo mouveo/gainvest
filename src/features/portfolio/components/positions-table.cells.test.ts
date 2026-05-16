@@ -32,6 +32,7 @@ function pos(overrides: Partial<Position> = {}): Position {
     investedGross: 1000,
     pnlCapitalGross: 0,
     currentPrice: 110,
+    currentPriceNative: 110,
     pruPctPar: null,
     currentPctPar: null,
     valuation: 1100,
