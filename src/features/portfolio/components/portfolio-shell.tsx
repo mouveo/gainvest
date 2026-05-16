@@ -20,6 +20,7 @@ import { AddOrderSheet } from "./add-order-sheet";
 import { AutoRefreshPrices } from "./auto-refresh-prices";
 import { HoldingFeesToggle, useNetOfFeesMode } from "./holding-fees-toggle";
 import { ImportSheet } from "./import-sheet";
+import { InflationToggle, useInflationMode } from "./inflation-toggle";
 import { KpiStrip } from "./kpi-strip";
 import { MovementsTable } from "./movements-table";
 import { PnlModeToggle, usePnlMode } from "./pnl-mode-toggle";
@@ -51,6 +52,7 @@ export function PortfolioShell({
   const [tab, setTab] = useState<Tab>("positions");
   const [withDividends, setWithDividends] = usePnlMode();
   const [netOfFees, setNetOfFees] = useNetOfFeesMode();
+  const [inflationAdjusted, setInflationAdjusted] = useInflationMode();
   // Cash positions carry synthetic CASH-* pseudo-ISINs — they have no place
   // in the order autocomplete (you don't "buy" cash from the order sheet).
   // Positions sont émises par (isin, support, broker) depuis Plan L, donc un
@@ -135,6 +137,7 @@ export function PortfolioShell({
           <div className="flex items-center gap-4">
             <PnlModeToggle value={withDividends} onChange={setWithDividends} />
             <HoldingFeesToggle value={netOfFees} onChange={setNetOfFees} />
+            <InflationToggle value={inflationAdjusted} onChange={setInflationAdjusted} />
           </div>
         </div>
 
@@ -145,6 +148,7 @@ export function PortfolioShell({
             pricesUpdatedAt={pricesUpdatedAt}
             withDividends={withDividends}
             netOfFees={netOfFees}
+            inflationAdjusted={inflationAdjusted}
           />
         )}
 
@@ -154,6 +158,7 @@ export function PortfolioShell({
             totals={visibleRealizationTotals}
             withDividends={withDividends}
             netOfFees={netOfFees}
+            inflationAdjusted={inflationAdjusted}
           />
         )}
 
@@ -166,6 +171,7 @@ export function PortfolioShell({
             positions={positions}
             withDividends={withDividends}
             netOfFees={netOfFees}
+            inflationAdjusted={inflationAdjusted}
             onVisibleRowsChange={setVisiblePositions}
           />
         </TabsContent>
@@ -174,6 +180,7 @@ export function PortfolioShell({
             realizations={realizations}
             withDividends={withDividends}
             netOfFees={netOfFees}
+            inflationAdjusted={inflationAdjusted}
             priceByIsin={priceByIsin}
             onVisibleRowsChange={setVisibleRealizations}
           />

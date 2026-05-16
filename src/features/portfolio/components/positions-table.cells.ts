@@ -94,40 +94,90 @@ export type AnnualizedYieldCell = { kind: "dash" } | { kind: "rate"; value: numb
 
 type AnnualizedYieldInput = Pick<
   Position,
-  "xirrCapital" | "xirrTotal" | "xirrCapitalNetFees" | "xirrTotalNetFees"
+  | "xirrCapital"
+  | "xirrTotal"
+  | "xirrCapitalNetFees"
+  | "xirrTotalNetFees"
+  | "xirrCapitalReal"
+  | "xirrTotalReal"
+  | "xirrCapitalNetFeesReal"
+  | "xirrTotalNetFeesReal"
 >;
+
+export type CellOpts = {
+  withDividends: boolean;
+  netOfFees: boolean;
+  inflationAdjusted?: boolean;
+};
 
 export function pnlAnnualizedCell(
   p: AnnualizedYieldInput,
-  opts: { withDividends: boolean; netOfFees: boolean },
+  opts: CellOpts,
 ): AnnualizedYieldCell {
+  const real = opts.inflationAdjusted === true;
   const v = opts.netOfFees
     ? opts.withDividends
-      ? p.xirrTotalNetFees
-      : p.xirrCapitalNetFees
+      ? real
+        ? p.xirrTotalNetFeesReal
+        : p.xirrTotalNetFees
+      : real
+        ? p.xirrCapitalNetFeesReal
+        : p.xirrCapitalNetFees
     : opts.withDividends
-      ? p.xirrTotal
-      : p.xirrCapital;
+      ? real
+        ? p.xirrTotalReal
+        : p.xirrTotal
+      : real
+        ? p.xirrCapitalReal
+        : p.xirrCapital;
   return Number.isFinite(v) ? { kind: "rate", value: v } : { kind: "dash" };
+}
+
+// Picks the dedicated PnL field for the current (withDividends, netOfFees,
+// inflationAdjusted) combination. The *NetFees variants are pre-computed
+// upstream (realize.ts), so this never recomputes `base - holdingFees` in
+// the UI — it just selects the right scalar.
+export type PnlPick = Pick<
+  Position,
+  | "pnlCapital"
+  | "pnlTotal"
+  | "pnlCapitalReal"
+  | "pnlTotalReal"
+  | "pnlCapitalNetFeesReal"
+  | "pnlTotalNetFeesReal"
+  | "holdingFees"
+>;
+
+export function pickPnlValue(p: PnlPick, opts: CellOpts): number {
+  const real = opts.inflationAdjusted === true;
+  if (opts.netOfFees) {
+    if (real) {
+      return opts.withDividends ? p.pnlTotalNetFeesReal : p.pnlCapitalNetFeesReal;
+    }
+    const base = opts.withDividends ? p.pnlTotal : p.pnlCapital;
+    return base - p.holdingFees;
+  }
+  if (real) {
+    return opts.withDividends ? p.pnlTotalReal : p.pnlCapitalReal;
+  }
+  return opts.withDividends ? p.pnlTotal : p.pnlCapital;
 }
 
 // PnL % stays a dash for cash — a percent on a current balance has no
 // well-defined denominator (cash mode uses XIRR for the rate of return view).
 export type PnlPctCell = { kind: "dash" } | { kind: "pct"; value: number };
 
-type PnlPctInput = Pick<
-  Position,
-  "assetClass" | "pnlCapital" | "pnlTotal" | "holdingFees" | "invested"
->;
+type PnlPctInput = Pick<Position, "assetClass" | "invested" | "investedReal"> & PnlPick;
 
 export function pnlPctCell(
   p: PnlPctInput,
-  opts: { withDividends: boolean; netOfFees: boolean },
+  opts: CellOpts,
 ): PnlPctCell {
   if (p.assetClass === "cash") return { kind: "dash" };
-  const base = opts.withDividends ? p.pnlTotal : p.pnlCapital;
-  const adj = base - (opts.netOfFees ? p.holdingFees : 0);
-  const value = p.invested > 0 ? adj / p.invested : 0;
+  const real = opts.inflationAdjusted === true;
+  const numerator = pickPnlValue(p, opts);
+  const denominator = real ? p.investedReal : p.invested;
+  const value = denominator > 0 ? numerator / denominator : 0;
   if (!Number.isFinite(value)) return { kind: "dash" };
   return { kind: "pct", value };
 }

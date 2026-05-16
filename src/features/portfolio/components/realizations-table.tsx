@@ -81,15 +81,18 @@ export function RealizationsTable({
   realizations,
   withDividends,
   netOfFees,
+  inflationAdjusted = false,
   priceByIsin,
   onVisibleRowsChange,
 }: {
   realizations: PastRealization[];
   withDividends: boolean;
   netOfFees: boolean;
+  inflationAdjusted?: boolean;
   priceByIsin: Record<string, CurrentPrice>;
   onVisibleRowsChange?: (rows: PastRealization[]) => void;
 }) {
+  const realSuffix = inflationAdjusted ? " (€ réels)" : "";
   useState(() => {
     migrateRealizationsVisibilityKey();
     return null;
@@ -273,24 +276,28 @@ export function RealizationsTable({
       },
       {
         id: "saleNet",
-        accessorFn: (r) => r.saleNet,
+        accessorFn: (r) => (inflationAdjusted ? r.saleNetReal : r.saleNet),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Encaissé net" align="right" />
+          <DataTableColumnHeader column={column} title={`Encaissé net${realSuffix}`} align="right" />
         ),
-        cell: ({ row }) => (
-          <div className="text-right font-mono tabular-nums">
-            {fmtCcy(row.original.saleNet, 2)}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const v = inflationAdjusted ? row.original.saleNetReal : row.original.saleNet;
+          return (
+            <div className="text-right font-mono tabular-nums">{fmtCcy(v, 2)}</div>
+          );
+        },
       },
       {
         id: "dividends",
-        accessorFn: (r) => r.dividendsAttributed,
+        accessorFn: (r) =>
+          inflationAdjusted ? r.dividendsAttributedReal : r.dividendsAttributed,
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Dividendes attribués" align="right" />
+          <DataTableColumnHeader column={column} title={`Dividendes attribués${realSuffix}`} align="right" />
         ),
         cell: ({ row }) => {
-          const v = row.original.dividendsAttributed;
+          const v = inflationAdjusted
+            ? row.original.dividendsAttributedReal
+            : row.original.dividendsAttributed;
           return (
             <div className="text-right font-mono tabular-nums">
               {v > 0.005 ? fmtCcy(v, 2) : "—"}
@@ -300,16 +307,19 @@ export function RealizationsTable({
       },
       {
         id: "holdingFees",
-        accessorFn: (r) => r.holdingFeesAttributed,
+        accessorFn: (r) =>
+          inflationAdjusted ? r.holdingFeesAttributedReal : r.holdingFeesAttributed,
         header: ({ column }) => (
           <DataTableColumnHeader
             column={column}
-            title="Frais de détention attribués"
+            title={`Frais de détention attribués${realSuffix}`}
             align="right"
           />
         ),
         cell: ({ row }) => {
-          const v = row.original.holdingFeesAttributed;
+          const v = inflationAdjusted
+            ? row.original.holdingFeesAttributedReal
+            : row.original.holdingFeesAttributed;
           return v > 0.005 ? (
             <div className="text-right">
               <MoneyCell value={v} dp={2} />
@@ -321,9 +331,20 @@ export function RealizationsTable({
       },
       {
         id: "realizedTotal",
-        accessorFn: (r) => (withDividends ? r.pnlTotal : r.pnlCapital),
+        accessorFn: (r) => {
+          if (inflationAdjusted) {
+            return netOfFees
+              ? withDividends
+                ? r.pnlTotalNetFeesReal
+                : r.pnlCapitalNetFeesReal
+              : withDividends
+                ? r.pnlTotalReal
+                : r.pnlCapitalReal;
+          }
+          return withDividends ? r.pnlTotal : r.pnlCapital;
+        },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Réalisé total" align="right" />
+          <DataTableColumnHeader column={column} title={`Réalisé total${realSuffix}`} align="right" />
         ),
         cell: ({ getValue }) => (
           <div className="text-right">
@@ -336,15 +357,23 @@ export function RealizationsTable({
         accessorFn: (r) => {
           const v = netOfFees
             ? withDividends
-              ? r.xirrTotalNetFees
-              : r.xirrCapitalNetFees
+              ? inflationAdjusted
+                ? r.xirrTotalNetFeesReal
+                : r.xirrTotalNetFees
+              : inflationAdjusted
+                ? r.xirrCapitalNetFeesReal
+                : r.xirrCapitalNetFees
             : withDividends
-              ? r.xirrTotal
-              : r.xirrCapital;
+              ? inflationAdjusted
+                ? r.xirrTotalReal
+                : r.xirrTotal
+              : inflationAdjusted
+                ? r.xirrCapitalReal
+                : r.xirrCapital;
           return Number.isFinite(v) ? v : Number.NaN;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="XIRR" align="right" />
+          <DataTableColumnHeader column={column} title={`XIRR${realSuffix}`} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -368,7 +397,7 @@ export function RealizationsTable({
         },
       },
     ],
-    [withDividends, netOfFees, priceByIsin],
+    [withDividends, netOfFees, inflationAdjusted, realSuffix, priceByIsin],
   );
 
   if (realizations.length === 0) {

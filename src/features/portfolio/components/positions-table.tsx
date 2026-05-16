@@ -35,6 +35,7 @@ import {
   currentPriceCell,
   holdingFeesCell,
   orderPriceCell,
+  pickPnlValue,
   pnlAnnualizedCell,
   pnlPctCell,
   pruCell,
@@ -111,13 +112,16 @@ export function PositionsTable({
   positions,
   withDividends = false,
   netOfFees = false,
+  inflationAdjusted = false,
   onVisibleRowsChange,
 }: {
   positions: Position[];
   withDividends?: boolean;
   netOfFees?: boolean;
+  inflationAdjusted?: boolean;
   onVisibleRowsChange?: (rows: Position[]) => void;
 }) {
+  const realSuffix = inflationAdjusted ? " (€ réels)" : "";
   useState(() => {
     migratePositionsVisibilityKey();
     return null;
@@ -325,13 +329,14 @@ export function PositionsTable({
       },
       {
         id: "invested",
-        accessorFn: (p) => p.invested,
+        accessorFn: (p) => (inflationAdjusted ? p.investedReal : p.invested),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Investi" align="right" />
+          <DataTableColumnHeader column={column} title={`Investi${realSuffix}`} align="right" />
         ),
-        cell: ({ row }) => (
-          <div className="text-right font-mono tabular-nums">{fmtCcy(row.original.invested, 0)}</div>
-        ),
+        cell: ({ row }) => {
+          const v = inflationAdjusted ? row.original.investedReal : row.original.invested;
+          return <div className="text-right font-mono tabular-nums">{fmtCcy(v, 0)}</div>;
+        },
       },
       {
         id: "valuation",
@@ -406,12 +411,13 @@ export function PositionsTable({
       {
         id: "pnl",
         accessorFn: (p) => {
-          if (p.assetClass === "cash") return p.pnlTotal;
-          const base = withDividends ? p.pnlTotal : p.pnlCapital;
-          return base - (netOfFees ? p.holdingFees : 0);
+          if (p.assetClass === "cash") {
+            return inflationAdjusted ? p.pnlTotalReal : p.pnlTotal;
+          }
+          return pickPnlValue(p, { withDividends, netOfFees, inflationAdjusted });
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PnL" align="right" />
+          <DataTableColumnHeader column={column} title={`PnL${realSuffix}`} align="right" />
         ),
         cell: ({ getValue }) => (
           <div className="text-right">
@@ -421,9 +427,10 @@ export function PositionsTable({
       },
       {
         id: "pnlTotal",
-        accessorFn: (p) => p.pnlTotal - (netOfFees ? p.holdingFees : 0),
+        accessorFn: (p) =>
+          pickPnlValue(p, { withDividends: true, netOfFees, inflationAdjusted }),
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PnL total" align="right" />
+          <DataTableColumnHeader column={column} title={`PnL total${realSuffix}`} align="right" />
         ),
         cell: ({ getValue }) => (
           <div className="text-right">
@@ -434,11 +441,11 @@ export function PositionsTable({
       {
         id: "pnlPct",
         accessorFn: (p) => {
-          const cell = pnlPctCell(p, { withDividends, netOfFees });
+          const cell = pnlPctCell(p, { withDividends, netOfFees, inflationAdjusted });
           return cell.kind === "pct" ? cell.value : Number.NaN;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PnL %" align="right" />
+          <DataTableColumnHeader column={column} title={`PnL %${realSuffix}`} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -453,7 +460,7 @@ export function PositionsTable({
       {
         id: "pnlAnnualized",
         accessorFn: (p) => {
-          const cell = pnlAnnualizedCell(p, { withDividends, netOfFees });
+          const cell = pnlAnnualizedCell(p, { withDividends, netOfFees, inflationAdjusted });
           return cell.kind === "rate" ? cell.value : Number.NaN;
         },
         sortingFn: (a, b, columnId) => {
@@ -467,7 +474,7 @@ export function PositionsTable({
           return av - bv;
         },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PnL annualisé" align="right" />
+          <DataTableColumnHeader column={column} title={`PnL annualisé${realSuffix}`} align="right" />
         ),
         cell: ({ getValue }) => {
           const v = getValue<number>();
@@ -498,7 +505,7 @@ export function PositionsTable({
         },
       },
     ],
-    [withDividends, netOfFees],
+    [withDividends, netOfFees, inflationAdjusted, realSuffix],
   );
 
   if (positions.length === 0) {
