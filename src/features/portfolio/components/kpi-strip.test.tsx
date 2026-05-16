@@ -22,6 +22,17 @@ function totals(overrides: Partial<PortfolioTotals>): PortfolioTotals {
     totalFees: 0,
     lines: 0,
     kpiMode: "instruments",
+    investedReal: 0,
+    dividendsTotalReal: 0,
+    holdingFeesTotalReal: 0,
+    pnlReal: 0,
+    pnlTotalReal: 0,
+    pnlPctReal: 0,
+    pnlPctTotalReal: 0,
+    xirrCapitalReal: 0,
+    xirrTotalReal: 0,
+    xirrCapitalNetFeesReal: 0,
+    xirrTotalNetFeesReal: 0,
     ...overrides,
   };
 }
