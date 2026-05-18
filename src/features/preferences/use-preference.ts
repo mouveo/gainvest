@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getUserPreference, setUserPreference, type PreferenceScope } from "./actions";
+import { getUserPreference, setUserPreference } from "./actions";
+import type { PreferenceScope } from "./constants";
 import {
   resolvePreferenceValue,
   safeReadLocalStorage,

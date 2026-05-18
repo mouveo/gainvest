@@ -106,6 +106,15 @@ export function AddOrderSheet({ knownIsins = [], accounts, activeAccount }: Prop
   const [accountTarget, setAccountTarget] = useState<string>(
     needsTargetPick ? "" : (activeAccount as string),
   );
+  // Resync target quand l'utilisateur change de compte actif via le switcher
+  // pendant que le drawer est monté (cf. même fix dans import-sheet.tsx).
+  useEffect(() => {
+    if (needsTargetPick) {
+      setAccountTarget("");
+    } else {
+      setAccountTarget(activeAccount as string);
+    }
+  }, [activeAccount, needsTargetPick]);
   const accountById = useMemo(
     () => new Map(accounts.map((a) => [a.id, a])),
     [accounts],

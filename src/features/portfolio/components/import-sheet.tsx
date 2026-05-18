@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, FileUp, Upload } from "lucide-react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { ALL_ACCOUNTS, type ActiveAccount } from "@/features/accounts/constants";
 import type { Account } from "@/features/accounts/queries";
@@ -107,6 +107,18 @@ export function ImportSheet({ accounts, activeAccount }: Props) {
   const [accountTarget, setAccountTarget] = useState<string>(
     needsTargetPick ? "" : (activeAccount as string),
   );
+
+  // Resync target quand l'utilisateur change de compte actif via le switcher
+  // pendant que le drawer est monté (useState ne re-init que sur premier
+  // mount — sans ce useEffect, accountTarget reste bloqué sur l'ancien
+  // compte et l'import atterrit au mauvais endroit).
+  useEffect(() => {
+    if (needsTargetPick) {
+      setAccountTarget("");
+    } else {
+      setAccountTarget(activeAccount as string);
+    }
+  }, [activeAccount, needsTargetPick]);
 
   const accountById = useMemo(
     () => new Map(accounts.map((a) => [a.id, a])),

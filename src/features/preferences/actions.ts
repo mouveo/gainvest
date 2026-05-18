@@ -3,22 +3,11 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
 
-export const PREFERENCE_SCOPES = [
-  "positions",
-  "realizations",
-  "movements",
-  "global",
-] as const;
-
-export type PreferenceScope = (typeof PREFERENCE_SCOPES)[number];
-
-export type PreferencePayload = Record<string, unknown>;
-
-function isPreferenceScope(value: unknown): value is PreferenceScope {
-  return (
-    typeof value === "string" && (PREFERENCE_SCOPES as readonly string[]).includes(value)
-  );
-}
+import {
+  isPreferenceScope,
+  type PreferencePayload,
+  type PreferenceScope,
+} from "./constants";
 
 /**
  * Read the current user's preference payload for a given scope. Returns

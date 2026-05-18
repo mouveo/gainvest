@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from "react";
 
 import { useUserPreference } from "@/features/preferences/use-preference";
-import type { PreferenceScope } from "@/features/preferences/actions";
+import type { PreferenceScope } from "@/features/preferences/constants";
 
 import { computeDefaults, type ColumnDef, type VisibleMap } from "./types";
 
