@@ -43,6 +43,10 @@ export function useUserPreference<T>(
   const defaultRef = useRef(defaultValue);
   const lastWrittenRef = useRef<T | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Once the user has interacted, we refuse to let a late DB read override
+  // their value. Critical for React Strict Mode in dev (effect runs twice)
+  // and for any re-mount happening before the 500ms debounce flushes.
+  const userTouchedRef = useRef(false);
 
   // Cold start: pull from localStorage (sync, blocking is OK), then DB
   // (async). Whichever comes back with a definite value wins, with DB > LS.
@@ -52,7 +56,7 @@ export function useUserPreference<T>(
     const lsValue = localStorageKey
       ? safeReadLocalStorage<T>(localStorageKey)
       : null;
-    if (lsValue !== null) {
+    if (lsValue !== null && !userTouchedRef.current) {
       setValue(lsValue);
     }
 
@@ -60,6 +64,10 @@ export function useUserPreference<T>(
       try {
         const payload = await getUserPreference(scope);
         if (cancelled) return;
+        // Si l'utilisateur a déjà touché à la valeur dans cette session, on
+        // ne réécrase pas son choix avec une lecture DB potentiellement
+        // antérieure au write debounced.
+        if (userTouchedRef.current) return;
         const dbValue =
           payload && Object.prototype.hasOwnProperty.call(payload, key)
             ? (payload[key] as T)
@@ -104,6 +112,7 @@ export function useUserPreference<T>(
 
   const update = useCallback(
     (next: T) => {
+      userTouchedRef.current = true;
       setValue(next);
       if (localStorageKey) safeWriteLocalStorage(localStorageKey, next);
       if (debounceTimerRef.current !== null) {
