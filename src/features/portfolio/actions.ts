@@ -328,11 +328,11 @@ export async function setCashBalance(input: {
   const fxRate = fxLookup.rate;
 
   // Replay every cash-impacting transaction up to atDate, in native currency,
-  // for the targeted bucket. Mirrors the logic in realize.ts.
+  // for the targeted bucket. Scoped by account_id (RLS gates visibility);
+  // transactions.user_id is audit-only now and not used for permissions.
   const { data: rows, error: txErr } = await supabase
     .from("transactions")
     .select("id, kind, gross_amount, fees, trade_date, notes")
-    .eq("user_id", user.id)
     .eq("account_id", accountId)
     .eq("support", support)
     .eq("broker", broker)
@@ -436,10 +436,11 @@ export async function deleteTransactionsByBroker(
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const accountId = resolved.accountId;
 
+  // RLS gates the delete on can_write_account (owner / editor). The
+  // account_id scope is the membership boundary; user_id stays out of it.
   const { data, error } = await supabase
     .from("transactions")
     .delete()
-    .eq("user_id", user.id)
     .eq("account_id", accountId)
     .eq("broker", brokerName)
     .select("id");
@@ -489,21 +490,20 @@ export async function setInstrumentListing(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // Ownership check: when a specific account is active, restrict to that
-  // account's transactions. In ALL mode, fall back to the user-wide check
-  // so consolidated views can still edit listings they hold somewhere.
+  // Membership check: when a specific account is active, restrict to that
+  // account's transactions. In ALL mode, look across every account the
+  // caller can access (RLS already filters the visible transactions).
   const active = await getActiveAccount();
   let txnQuery = supabase
     .from("transactions")
     .select("id")
-    .eq("user_id", user.id)
     .eq("instrument_id", instrumentId);
   if (active !== ALL_ACCOUNTS) {
     txnQuery = txnQuery.eq("account_id", active);
   }
   const { data: txn, error: txnErr } = await txnQuery.limit(1).maybeSingle();
   if (txnErr) return { ok: false, error: txnErr.message };
-  if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
+  if (!txn) return { ok: false, error: "Instrument non détenu sur un compte accessible." };
 
   const { error: updErr } = await supabase
     .from("instruments")
@@ -555,21 +555,21 @@ export async function setBondMetadata(args: {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // Mirror setInstrumentListing: only allow editing an instrument the user
-  // actually holds via at least one transaction. Scopes to the active account
-  // when one is selected; falls back to user-wide in ALL mode.
+  // Mirror setInstrumentListing: only allow editing an instrument the caller
+  // actually holds via at least one transaction on an accessible account.
+  // Scopes to the active account when one is selected; in ALL mode RLS
+  // restricts visibility to accounts the caller is a member of.
   const active = await getActiveAccount();
   let txnQuery = supabase
     .from("transactions")
     .select("id")
-    .eq("user_id", user.id)
     .eq("instrument_id", instrumentId);
   if (active !== ALL_ACCOUNTS) {
     txnQuery = txnQuery.eq("account_id", active);
   }
   const { data: txn, error: txnErr } = await txnQuery.limit(1).maybeSingle();
   if (txnErr) return { ok: false, error: txnErr.message };
-  if (!txn) return { ok: false, error: "Instrument non détenu par cet utilisateur." };
+  if (!txn) return { ok: false, error: "Instrument non détenu sur un compte accessible." };
 
   const { error: updErr } = await supabase
     .from("instruments")

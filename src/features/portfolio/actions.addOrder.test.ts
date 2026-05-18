@@ -546,19 +546,19 @@ describe("addOrder — account scope", () => {
     });
   }
 
-  it("refuses an account_id the caller does not own", async () => {
+  it("refuses an account_id the caller cannot access", async () => {
     const sb = makeSupabase({});
     createClientMock.mockResolvedValue(sb.client as never);
     resolveMock.mockResolvedValueOnce({
       ok: false,
-      error: "Compte introuvable ou non détenu.",
+      error: "Compte introuvable ou non accessible.",
     });
 
     const r = await addOrder(
       basicForm({ account_id: "00000000-0000-0000-0000-000000000099" }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/introuvable|détenu/i);
+    if (!r.ok) expect(r.error).toMatch(/introuvable|accessible/i);
     expect(sb.inserts).toHaveLength(0);
   });
 

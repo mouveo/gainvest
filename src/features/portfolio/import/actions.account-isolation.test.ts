@@ -100,22 +100,18 @@ function makeSupabase(opts: {
                   error: null,
                 }),
               }),
-              // priorTx chain when we add eq(user_id).eq(account_id).eq(support).in(kind).in(instId)
-              eq: (col2: string, val2: string) => {
-                if (col2 === "account_id") filters.accountId = val2;
-                return {
-                  eq: () => ({
-                    in: () => ({
-                      in: async () => ({
-                        data: priorTx.filter(
-                          (r) => r.account_id === filters.accountId,
-                        ),
-                        error: null,
-                      }),
-                    }),
+              // priorTx chain: eq(account_id).eq(support).in(kind).in(instrument_id)
+              // (user_id no longer filters — RLS scopes the read by membership)
+              eq: () => ({
+                in: () => ({
+                  in: async () => ({
+                    data: priorTx.filter(
+                      (r) => r.account_id === filters.accountId,
+                    ),
+                    error: null,
                   }),
-                };
-              },
+                }),
+              }),
             };
           },
           insert: async (chunk: Record<string, unknown>[]) => {
