@@ -738,8 +738,8 @@ describe("applyView", () => {
 
     const global = sb.prefs.find((r) => r.scope === "global")!.payload;
     expect(global).toEqual({
-      inflationAdjusted: true, // preserved
-      withDividends: true,
+      inflationAdjusted: true, // preserved (no overwrite — view set it to false? no, view didn't include it)
+      pnlWithDividends: true,
       netOfFees: false,
     });
   });

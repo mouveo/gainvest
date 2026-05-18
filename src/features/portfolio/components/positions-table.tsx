@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight, LineChart } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,9 @@ import {
 import { DataTable } from "@/components/data-table/data-table";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
+import { bootstrapView } from "@/features/saved-views/actions";
+import { ViewsSwitcher } from "@/features/saved-views/components/views-switcher";
+import { useViewState } from "@/features/saved-views/use-view-state";
 import { cn } from "@/lib/utils";
 
 import type { Position } from "../aggregate";
@@ -115,14 +118,20 @@ function migratePositionsVisibilityKey(): void {
 export function PositionsTable({
   positions,
   withDividends = false,
+  setWithDividends,
   netOfFees = false,
+  setNetOfFees,
   inflationAdjusted = false,
+  setInflationAdjusted,
   onVisibleRowsChange,
 }: {
   positions: Position[];
   withDividends?: boolean;
+  setWithDividends?: (value: boolean) => void;
   netOfFees?: boolean;
+  setNetOfFees?: (value: boolean) => void;
   inflationAdjusted?: boolean;
+  setInflationAdjusted?: (value: boolean) => void;
   onVisibleRowsChange?: (rows: Position[]) => void;
 }) {
   const realSuffix = inflationAdjusted ? " (€ réels)" : "";
@@ -131,13 +140,48 @@ export function PositionsTable({
     return null;
   });
 
-  const [search, setSearch] = useState("");
   const [selectedBond, setSelectedBond] = useState<Position | null>(null);
 
-  const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
+  const { toggle, reset, showAll, visible, visibleCount, setVisible } = useVisibleColumns(
     POSITIONS_VISIBILITY_KEY,
     POSITION_COLUMNS,
   );
+
+  const viewState = useViewState({ scope: "positions" });
+  const { search, setSearch } = viewState;
+
+  // Bootstrap: if no scoped prefs exist, apply the default view. Runs once
+  // per scope and is a no-op if the user already has scoped state or no
+  // default view configured.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await bootstrapView("positions");
+      if (cancelled || !res.ok || !res.result) return;
+      if (res.result.activeOnly) {
+        viewState.setActiveViewId(res.result.id);
+        return;
+      }
+      viewState.applyPayload(res.result.payload, {
+        id: res.result.id,
+        setVisibleColumns: setVisible,
+        toggleSetters:
+          setWithDividends && setNetOfFees && setInflationAdjusted
+            ? {
+                setWithDividends,
+                setNetOfFees,
+                setInflationAdjusted,
+              }
+            : undefined,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Bootstrap is intentionally a one-shot — re-running on setter identity
+    // changes would loop. Suppress the lint warning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredBySearch = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -546,6 +590,11 @@ export function PositionsTable({
     return <EmptyState />;
   }
 
+  const currentPayload = viewState.buildPayload({
+    columns: visible as Record<string, boolean>,
+    toggles: { withDividends, netOfFees, inflationAdjusted },
+  });
+
   return (
     <>
       <DataTable
@@ -554,6 +603,10 @@ export function PositionsTable({
         storageKey="gainvest:datatable:positions:state"
         columnVisibility={visible}
         initialState={{ sorting: [{ id: "valuation", desc: true }] }}
+        sorting={viewState.sorting}
+        onSortingChange={viewState.setSorting}
+        columnFilters={viewState.columnFilters}
+        onColumnFiltersChange={viewState.setColumnFilters}
         toolbar={(table) => (
           <DataTableToolbar
             table={table}
@@ -576,14 +629,31 @@ export function PositionsTable({
               { columnId: "operateur", title: "Opérateur", options: operatorOptions },
             ]}
             trailing={
-              <ColumnsPicker
-                columns={POSITION_COLUMNS}
-                visible={visible}
-                visibleCount={visibleCount}
-                onToggle={toggle}
-                onReset={reset}
-                onShowAll={showAll}
-              />
+              <>
+                <ViewsSwitcher
+                  scope="positions"
+                  currentPayload={currentPayload}
+                  activeViewId={viewState.activeViewId}
+                  onApply={(id, payload) =>
+                    viewState.applyPayload(payload, {
+                      id: id || null,
+                      setVisibleColumns: setVisible,
+                      toggleSetters:
+                        setWithDividends && setNetOfFees && setInflationAdjusted
+                          ? { setWithDividends, setNetOfFees, setInflationAdjusted }
+                          : undefined,
+                    })
+                  }
+                />
+                <ColumnsPicker
+                  columns={POSITION_COLUMNS}
+                  visible={visible}
+                  visibleCount={visibleCount}
+                  onToggle={toggle}
+                  onReset={reset}
+                  onShowAll={showAll}
+                />
+              </>
             }
           />
         )}

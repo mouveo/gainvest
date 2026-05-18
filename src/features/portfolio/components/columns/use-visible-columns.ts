@@ -85,12 +85,31 @@ export function useVisibleColumns<K extends string>(
     [columns, visible],
   );
 
+  const setVisible = useCallback(
+    (next: Record<string, boolean>) => {
+      // Drop keys that don't belong to this column set, defaulting missing
+      // ones to the picker default so an incoming payload (e.g. from a saved
+      // view) can't poison the state with stale columns.
+      const sanitized = {} as VisibleMap<K>;
+      for (const c of columns) {
+        const incoming = next[c.key];
+        sanitized[c.key] =
+          typeof incoming === "boolean"
+            ? incoming
+            : c.always || c.defaultVisible !== false;
+      }
+      persist(sanitized);
+    },
+    [columns, persist],
+  );
+
   return {
     visible,
     shown,
     toggle,
     reset,
     showAll,
+    setVisible,
     visibleCount,
   };
 }

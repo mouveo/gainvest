@@ -272,7 +272,15 @@ const SCOPED_PREFERENCE_KEYS = [
   "activeViewId",
 ] as const;
 
-const GLOBAL_TOGGLE_KEYS = ["withDividends", "netOfFees", "inflationAdjusted"] as const;
+// View payloads use logical names (`withDividends`); `user_preferences.global`
+// stores `pnlWithDividends` (the legacy key the toggle hook reads). Map both
+// directions here so the server write stays consistent with what
+// `usePnlMode()` / `useNetOfFeesMode()` / `useInflationMode()` reads back.
+const GLOBAL_TOGGLE_KEY_MAP = {
+  withDividends: "pnlWithDividends",
+  netOfFees: "netOfFees",
+  inflationAdjusted: "inflationAdjusted",
+} as const satisfies Record<string, string>;
 
 /**
  * Load a view and write its payload into `user_preferences`:
@@ -356,9 +364,9 @@ export async function applyView(
   // a view that doesn't touch `netOfFees` must not clobber the user's
   // current toggle state.
   const togglePatch: Record<string, unknown> = {};
-  for (const key of GLOBAL_TOGGLE_KEYS) {
-    const value = payload.toggles[key];
-    if (typeof value === "boolean") togglePatch[key] = value;
+  for (const [logical, persisted] of Object.entries(GLOBAL_TOGGLE_KEY_MAP)) {
+    const value = payload.toggles[logical as keyof typeof payload.toggles];
+    if (typeof value === "boolean") togglePatch[persisted] = value;
   }
 
   if (Object.keys(togglePatch).length > 0) {
@@ -389,4 +397,76 @@ export async function applyView(
   }
 
   return { ok: true, payload, scope: view.scope };
+}
+
+const SCOPED_VIEW_KEYS = [
+  "columns",
+  "filters",
+  "search",
+  "sort",
+  "pagination",
+  "activeViewId",
+];
+
+/**
+ * Initial-view bootstrap for a table page. Three branches:
+ *  1. `user_preferences[scope]` already has `activeViewId` → return it (no
+ *     re-apply: the user may have diverged since last application and we
+ *     want to respect their current state).
+ *  2. `user_preferences[scope]` has NO view-managed keys (fresh slate) AND
+ *     a default view exists → apply it and return `{ id, payload }`.
+ *  3. Otherwise → return `null` (the table uses its own scoped state).
+ */
+export async function bootstrapView(scope: ViewScope): Promise<
+  | { ok: true; result: null | { id: string; activeOnly: true } | { id: string; payload: ViewPayload; activeOnly: false } }
+  | { ok: false; error: string }
+> {
+  if (!isViewScope(scope)) return { ok: false, error: ERR_SCOPE };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: true, result: null };
+
+  const { data: prefs, error: prefErr } = await supabase
+    .from("user_preferences")
+    .select("payload")
+    .eq("user_id", user.id)
+    .eq("scope", scope)
+    .maybeSingle();
+  if (prefErr) return { ok: false, error: prefErr.message };
+
+  const prefPayload: Record<string, unknown> =
+    prefs?.payload && typeof prefs.payload === "object" && !Array.isArray(prefs.payload)
+      ? (prefs.payload as Record<string, unknown>)
+      : {};
+
+  const existingActiveId =
+    typeof prefPayload.activeViewId === "string" ? prefPayload.activeViewId : null;
+  if (existingActiveId) {
+    return { ok: true, result: { id: existingActiveId, activeOnly: true } };
+  }
+
+  const hasScopedState = SCOPED_VIEW_KEYS.some((key) =>
+    Object.prototype.hasOwnProperty.call(prefPayload, key),
+  );
+  if (hasScopedState) return { ok: true, result: null };
+
+  const { data: defaultRow, error: defErr } = await supabase
+    .from("saved_views")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("scope", scope)
+    .eq("is_default", true)
+    .maybeSingle();
+  if (defErr) return { ok: false, error: defErr.message };
+  if (!defaultRow) return { ok: true, result: null };
+
+  const applied = await applyView(defaultRow.id);
+  if (!applied.ok) return { ok: false, error: applied.error };
+  return {
+    ok: true,
+    result: { id: defaultRow.id, payload: applied.payload, activeOnly: false },
+  };
 }

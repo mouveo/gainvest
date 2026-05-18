@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/data-table/data-table";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
+import { bootstrapView } from "@/features/saved-views/actions";
+import { ViewsSwitcher } from "@/features/saved-views/components/views-switcher";
+import { useViewState } from "@/features/saved-views/use-view-state";
 
 import type { CurrentPrice } from "../aggregate";
 import { fmtCcy, fmtDateFR, fmtInt, fmtNum, fmtPct } from "../format";
@@ -81,15 +84,21 @@ function migrateRealizationsVisibilityKey(): void {
 export function RealizationsTable({
   realizations,
   withDividends,
+  setWithDividends,
   netOfFees,
+  setNetOfFees,
   inflationAdjusted = false,
+  setInflationAdjusted,
   priceByIsin,
   onVisibleRowsChange,
 }: {
   realizations: PastRealization[];
   withDividends: boolean;
+  setWithDividends?: (value: boolean) => void;
   netOfFees: boolean;
+  setNetOfFees?: (value: boolean) => void;
   inflationAdjusted?: boolean;
+  setInflationAdjusted?: (value: boolean) => void;
   priceByIsin: Record<string, CurrentPrice>;
   onVisibleRowsChange?: (rows: PastRealization[]) => void;
 }) {
@@ -99,12 +108,37 @@ export function RealizationsTable({
     return null;
   });
 
-  const [search, setSearch] = useState("");
-
-  const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
+  const { toggle, reset, showAll, visible, visibleCount, setVisible } = useVisibleColumns(
     REALIZATIONS_VISIBILITY_KEY,
     REALIZATION_COLUMNS,
   );
+
+  const viewState = useViewState({ scope: "realizations" });
+  const { search, setSearch } = viewState;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await bootstrapView("realizations");
+      if (cancelled || !res.ok || !res.result) return;
+      if (res.result.activeOnly) {
+        viewState.setActiveViewId(res.result.id);
+        return;
+      }
+      viewState.applyPayload(res.result.payload, {
+        id: res.result.id,
+        setVisibleColumns: setVisible,
+        toggleSetters:
+          setWithDividends && setNetOfFees && setInflationAdjusted
+            ? { setWithDividends, setNetOfFees, setInflationAdjusted }
+            : undefined,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredBySearch = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -405,6 +439,11 @@ export function RealizationsTable({
     return <EmptyState />;
   }
 
+  const currentPayload = viewState.buildPayload({
+    columns: visible as Record<string, boolean>,
+    toggles: { withDividends, netOfFees, inflationAdjusted },
+  });
+
   return (
     <DataTable
       columns={columns}
@@ -412,6 +451,10 @@ export function RealizationsTable({
       storageKey="gainvest:datatable:realizations:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "saleDate", desc: true }] }}
+      sorting={viewState.sorting}
+      onSortingChange={viewState.setSorting}
+      columnFilters={viewState.columnFilters}
+      onColumnFiltersChange={viewState.setColumnFilters}
       onVisibleRowsChange={onVisibleRowsChange}
       toolbar={(table) => (
         <DataTableToolbar
@@ -436,14 +479,31 @@ export function RealizationsTable({
           ]}
           dateRangeFilters={[{ columnId: "saleDate", title: "Date de vente" }]}
           trailing={
-            <ColumnsPicker
-              columns={REALIZATION_COLUMNS}
-              visible={visible}
-              visibleCount={visibleCount}
-              onToggle={toggle}
-              onReset={reset}
-              onShowAll={showAll}
-            />
+            <>
+              <ViewsSwitcher
+                scope="realizations"
+                currentPayload={currentPayload}
+                activeViewId={viewState.activeViewId}
+                onApply={(id, payload) =>
+                  viewState.applyPayload(payload, {
+                    id: id || null,
+                    setVisibleColumns: setVisible,
+                    toggleSetters:
+                      setWithDividends && setNetOfFees && setInflationAdjusted
+                        ? { setWithDividends, setNetOfFees, setInflationAdjusted }
+                        : undefined,
+                  })
+                }
+              />
+              <ColumnsPicker
+                columns={REALIZATION_COLUMNS}
+                visible={visible}
+                visibleCount={visibleCount}
+                onToggle={toggle}
+                onReset={reset}
+                onShowAll={showAll}
+              />
+            </>
           }
         />
       )}

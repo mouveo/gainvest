@@ -170,8 +170,11 @@ export function PortfolioShell({
           <PositionsTable
             positions={positions}
             withDividends={withDividends}
+            setWithDividends={setWithDividends}
             netOfFees={netOfFees}
+            setNetOfFees={setNetOfFees}
             inflationAdjusted={inflationAdjusted}
+            setInflationAdjusted={setInflationAdjusted}
             onVisibleRowsChange={setVisiblePositions}
           />
         </TabsContent>
@@ -179,14 +182,26 @@ export function PortfolioShell({
           <RealizationsTable
             realizations={realizations}
             withDividends={withDividends}
+            setWithDividends={setWithDividends}
             netOfFees={netOfFees}
+            setNetOfFees={setNetOfFees}
             inflationAdjusted={inflationAdjusted}
+            setInflationAdjusted={setInflationAdjusted}
             priceByIsin={priceByIsin}
             onVisibleRowsChange={setVisibleRealizations}
           />
         </TabsContent>
         <TabsContent value="movements">
-          <MovementsTable orders={orders} onVisibleRowsChange={setVisibleOrders} />
+          <MovementsTable
+            orders={orders}
+            withDividends={withDividends}
+            setWithDividends={setWithDividends}
+            netOfFees={netOfFees}
+            setNetOfFees={setNetOfFees}
+            inflationAdjusted={inflationAdjusted}
+            setInflationAdjusted={setInflationAdjusted}
+            onVisibleRowsChange={setVisibleOrders}
+          />
         </TabsContent>
       </Tabs>
     </div>
