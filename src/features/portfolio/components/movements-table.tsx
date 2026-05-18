@@ -1,7 +1,7 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type { ColumnDef as TanstackColumnDef } from "@tanstack/react-table";
 import { MOVEMENT_TOOLTIPS } from "./column-tooltips";
 
@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/data-table/data-table";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
+import { bootstrapView } from "@/features/saved-views/actions";
+import { ViewsSwitcher } from "@/features/saved-views/components/views-switcher";
+import { useViewState } from "@/features/saved-views/use-view-state";
 
 import type { OrderRow } from "../aggregate";
 import { deleteOrder } from "../actions";
@@ -103,9 +106,21 @@ function migrateOrdersVisibilityKey(): void {
 
 export function MovementsTable({
   orders,
+  withDividends = false,
+  setWithDividends,
+  netOfFees = false,
+  setNetOfFees,
+  inflationAdjusted = false,
+  setInflationAdjusted,
   onVisibleRowsChange,
 }: {
   orders: OrderRow[];
+  withDividends?: boolean;
+  setWithDividends?: (value: boolean) => void;
+  netOfFees?: boolean;
+  setNetOfFees?: (value: boolean) => void;
+  inflationAdjusted?: boolean;
+  setInflationAdjusted?: (value: boolean) => void;
   onVisibleRowsChange?: (rows: OrderRow[]) => void;
 }) {
   useState(() => {
@@ -113,14 +128,40 @@ export function MovementsTable({
     return null;
   });
 
-  const [search, setSearch] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
-  const { toggle, reset, showAll, visible, visibleCount } = useVisibleColumns(
+  const { toggle, reset, showAll, visible, visibleCount, setVisible } = useVisibleColumns(
     "gainvest:movements:visible-columns",
     MOVEMENT_COLUMNS,
   );
+
+  const viewState = useViewState({ scope: "movements" });
+  const { search, setSearch } = viewState;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await bootstrapView("movements");
+      if (cancelled || !res.ok || !res.result) return;
+      if (res.result.activeOnly) {
+        viewState.setActiveViewId(res.result.id);
+        return;
+      }
+      viewState.applyPayload(res.result.payload, {
+        id: res.result.id,
+        setVisibleColumns: setVisible,
+        toggleSetters:
+          setWithDividends && setNetOfFees && setInflationAdjusted
+            ? { setWithDividends, setNetOfFees, setInflationAdjusted }
+            : undefined,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onDelete = (id: string) => {
     setPendingId(id);
@@ -303,6 +344,11 @@ export function MovementsTable({
     [pendingId],
   );
 
+  const currentPayload = viewState.buildPayload({
+    columns: visible as Record<string, boolean>,
+    toggles: { withDividends, netOfFees, inflationAdjusted },
+  });
+
   return (
     <DataTable
       columns={columns}
@@ -310,6 +356,10 @@ export function MovementsTable({
       storageKey="gainvest:datatable:movements:state"
       columnVisibility={visible}
       initialState={{ sorting: [{ id: "date", desc: true }] }}
+      sorting={viewState.sorting}
+      onSortingChange={viewState.setSorting}
+      columnFilters={viewState.columnFilters}
+      onColumnFiltersChange={viewState.setColumnFilters}
       onVisibleRowsChange={onVisibleRowsChange}
       emptyState={
         <div className="text-muted-foreground py-12 text-center text-sm">
@@ -343,14 +393,31 @@ export function MovementsTable({
           ]}
           dateRangeFilters={[{ columnId: "date", title: "Date" }]}
           trailing={
-            <ColumnsPicker
-              columns={MOVEMENT_COLUMNS}
-              visible={visible}
-              visibleCount={visibleCount}
-              onToggle={toggle}
-              onReset={reset}
-              onShowAll={showAll}
-            />
+            <>
+              <ViewsSwitcher
+                scope="movements"
+                currentPayload={currentPayload}
+                activeViewId={viewState.activeViewId}
+                onApply={(id, payload) =>
+                  viewState.applyPayload(payload, {
+                    id: id || null,
+                    setVisibleColumns: setVisible,
+                    toggleSetters:
+                      setWithDividends && setNetOfFees && setInflationAdjusted
+                        ? { setWithDividends, setNetOfFees, setInflationAdjusted }
+                        : undefined,
+                  })
+                }
+              />
+              <ColumnsPicker
+                columns={MOVEMENT_COLUMNS}
+                visible={visible}
+                visibleCount={visibleCount}
+                onToggle={toggle}
+                onReset={reset}
+                onShowAll={showAll}
+              />
+            </>
           }
         />
       )}

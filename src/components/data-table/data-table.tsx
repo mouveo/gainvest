@@ -54,6 +54,19 @@ export type DataTableProps<TData, TValue> = {
   pageSizeOptions?: number[];
   className?: string;
   onVisibleRowsChange?: (rows: TData[]) => void;
+  /**
+   * Controlled-state props: when any of these is provided the table treats
+   * that slice as controlled (no internal state, no localStorage fallback for
+   * that slice). Useful when the table state is driven by a higher-level
+   * source like a saved view. Unprovided slices keep the legacy behaviour:
+   * internal state + localStorage hydration via `storageKey`.
+   */
+  sorting?: SortingState;
+  onSortingChange?: (next: SortingState) => void;
+  columnFilters?: ColumnFiltersState;
+  onColumnFiltersChange?: (next: ColumnFiltersState) => void;
+  pagination?: PaginationState;
+  onPaginationChange?: (next: PaginationState) => void;
 };
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -71,35 +84,90 @@ export function DataTable<TData, TValue>({
   pageSizeOptions,
   className,
   onVisibleRowsChange,
+  sorting: sortingProp,
+  onSortingChange,
+  columnFilters: columnFiltersProp,
+  onColumnFiltersChange,
+  pagination: paginationProp,
+  onPaginationChange,
 }: DataTableProps<TData, TValue>) {
+  const sortingControlled = sortingProp !== undefined;
+  const filtersControlled = columnFiltersProp !== undefined;
+  const paginationControlled = paginationProp !== undefined;
+
   // SSR-safe: initialize with the props/defaults so the first server-rendered
   // HTML matches the first client render. Persisted state from localStorage
   // is only applied AFTER hydration via an effect — this avoids the
   // "Hydration failed: server vs client mismatch" on attributes like
   // aria-sort that depend on the initial sorting state.
-  const [sorting, setSorting] = React.useState<SortingState>(initialState?.sorting ?? []);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
+  const [internalSorting, setInternalSorting] = React.useState<SortingState>(
+    initialState?.sorting ?? [],
+  );
+  const [internalColumnFilters, setInternalColumnFilters] = React.useState<ColumnFiltersState>(
     initialState?.columnFilters ?? [],
   );
-  const [pagination, setPagination] = React.useState<PaginationState>(
+  const [internalPagination, setInternalPagination] = React.useState<PaginationState>(
     initialState?.pagination ?? { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
   );
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   const [hydrated, setHydrated] = React.useState(false);
 
+  const sorting = sortingControlled ? sortingProp : internalSorting;
+  const columnFilters = filtersControlled ? columnFiltersProp : internalColumnFilters;
+  const pagination = paginationControlled ? paginationProp : internalPagination;
+
+  const setSorting: OnChangeFn<SortingState> = (updater) => {
+    const next =
+      typeof updater === "function" ? updater(sorting) : updater;
+    if (sortingControlled) onSortingChange?.(next);
+    else setInternalSorting(next);
+  };
+  const setColumnFilters: OnChangeFn<ColumnFiltersState> = (updater) => {
+    const next =
+      typeof updater === "function" ? updater(columnFilters) : updater;
+    if (filtersControlled) onColumnFiltersChange?.(next);
+    else setInternalColumnFilters(next);
+  };
+  const setPagination: OnChangeFn<PaginationState> = (updater) => {
+    const next =
+      typeof updater === "function" ? updater(pagination) : updater;
+    if (paginationControlled) onPaginationChange?.(next);
+    else setInternalPagination(next);
+  };
+
+  // localStorage hydration only runs for *uncontrolled* slices — the parent
+  // owns persistence when a slice is controlled.
   React.useEffect(() => {
     const persisted = readPersistedState(storageKey) ?? {};
-    if (persisted.sorting) setSorting(persisted.sorting);
-    if (persisted.columnFilters) setColumnFilters(persisted.columnFilters);
-    if (persisted.pagination) setPagination(persisted.pagination);
+    if (!sortingControlled && persisted.sorting) setInternalSorting(persisted.sorting);
+    if (!filtersControlled && persisted.columnFilters) {
+      setInternalColumnFilters(persisted.columnFilters);
+    }
+    if (!paginationControlled && persisted.pagination) {
+      setInternalPagination(persisted.pagination);
+    }
     setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
   React.useEffect(() => {
     if (!hydrated) return;
-    writePersistedState(storageKey, { sorting, columnFilters, pagination });
-  }, [hydrated, storageKey, sorting, columnFilters, pagination]);
+    if (sortingControlled && filtersControlled && paginationControlled) return;
+    writePersistedState(storageKey, {
+      ...(sortingControlled ? {} : { sorting: internalSorting }),
+      ...(filtersControlled ? {} : { columnFilters: internalColumnFilters }),
+      ...(paginationControlled ? {} : { pagination: internalPagination }),
+    });
+  }, [
+    hydrated,
+    storageKey,
+    sortingControlled,
+    filtersControlled,
+    paginationControlled,
+    internalSorting,
+    internalColumnFilters,
+    internalPagination,
+  ]);
 
   const table = useReactTable({
     data,
