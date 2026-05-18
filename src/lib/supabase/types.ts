@@ -283,6 +283,39 @@ export type Database = {
           },
         ]
       }
+      saved_views: {
+        Row: {
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          payload: Json
+          scope: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          name: string
+          payload: Json
+          scope: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          name?: string
+          payload?: Json
+          scope?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       transactions: {
         Row: {
           account_id: string
@@ -423,6 +456,10 @@ export type Database = {
       is_account_owner: {
         Args: { target_account: string; target_user: string }
         Returns: boolean
+      }
+      set_default_saved_view: {
+        Args: { target_id: string }
+        Returns: undefined
       }
     }
     Enums: {
