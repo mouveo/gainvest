@@ -115,18 +115,18 @@ export async function renameAccount(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // RLS filters to the caller's rows; the explicit eq("user_id") keeps the
-  // intent visible and stops a renamed row from silently no-op'ing when the
-  // user_id doesn't match.
+  // RLS gates the UPDATE on owner role (is_account_owner). If the row is
+  // invisible or the caller is not the owner, .maybeSingle() returns null.
   const { data, error } = await supabase
     .from("accounts")
     .update({ name: validated.value })
     .eq("id", accountId)
-    .eq("user_id", user.id)
     .select("id")
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: false, error: "Compte introuvable ou non détenu." };
+  if (!data) {
+    return { ok: false, error: "Compte introuvable ou modification non autorisée." };
+  }
 
   revalidateAccountSurfaces();
   return { ok: true };
@@ -154,11 +154,12 @@ export async function updateAccount(
       currency: parsed.value.currency,
     })
     .eq("id", accountId)
-    .eq("user_id", user.id)
     .select("id")
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: false, error: "Compte introuvable ou non détenu." };
+  if (!data) {
+    return { ok: false, error: "Compte introuvable ou modification non autorisée." };
+  }
 
   revalidateAccountSurfaces();
   return { ok: true };
@@ -173,23 +174,26 @@ export async function deleteAccount(accountId: string): Promise<AccountActionRes
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Non authentifié." };
 
-  // Ownership check first — RLS would already block the delete, but a
-  // surgical lookup gives a clean error message rather than "0 rows".
-  const { data: owned, error: ownedErr } = await supabase
+  // Accessibility check — RLS will filter the DELETE later (owner-only), but
+  // the surgical lookup lets us return a clean "not accessible" message
+  // instead of a generic "0 rows".
+  const { data: accessible, error: accessErr } = await supabase
     .from("accounts")
     .select("id")
     .eq("id", accountId)
-    .eq("user_id", user.id)
     .maybeSingle();
-  if (ownedErr) return { ok: false, error: ownedErr.message };
-  if (!owned) return { ok: false, error: "Compte introuvable ou non détenu." };
+  if (accessErr) return { ok: false, error: accessErr.message };
+  if (!accessible) {
+    return { ok: false, error: "Compte introuvable ou non accessible." };
+  }
 
-  // Refuse to delete the last remaining account: the FK on transactions
-  // requires at least one account to exist for new flows.
+  // Refuse to delete the last remaining accessible account: the FK on
+  // transactions requires at least one account to exist for new flows. Counts
+  // every account the caller can see (own / shared / read-only), not just
+  // owned ones, because that's what the UI surfaces.
   const { count: accountCount, error: countErr } = await supabase
     .from("accounts")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user.id);
+    .select("id", { count: "exact", head: true });
   if (countErr) return { ok: false, error: countErr.message };
   if ((accountCount ?? 0) <= 1) {
     return { ok: false, error: "Impossible de supprimer le dernier compte." };
@@ -207,12 +211,20 @@ export async function deleteAccount(accountId: string): Promise<AccountActionRes
     };
   }
 
-  const { error: delErr } = await supabase
+  // Final delete — RLS gates this on owner role. .select() lets us detect
+  // when RLS silently filtered the delete (caller is editor / viewer).
+  const { data: deleted, error: delErr } = await supabase
     .from("accounts")
     .delete()
     .eq("id", accountId)
-    .eq("user_id", user.id);
+    .select("id");
   if (delErr) return { ok: false, error: delErr.message };
+  if (!deleted || deleted.length === 0) {
+    return {
+      ok: false,
+      error: "Suppression refusée — propriétaire requis.",
+    };
+  }
 
   revalidateAccountSurfaces();
   return { ok: true };

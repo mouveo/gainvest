@@ -117,10 +117,11 @@ export async function importBrokerOrders(
     }
     const instIds = Array.from(instIdToIsin.keys());
     if (instIds.length > 0) {
+      // RLS gates visibility on account membership; account_id is the only
+      // scope we need here — user_id is audit-only on transactions now.
       const { data: priorTx, error: priorErr } = await supabase
         .from("transactions")
         .select("kind, quantity, trade_date, support, instrument_id")
-        .eq("user_id", user.id)
         .eq("account_id", accountId)
         .eq("support", support)
         .in("kind", ["buy", "sell"])

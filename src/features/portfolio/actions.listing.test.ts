@@ -58,18 +58,18 @@ function makeSupabase(opts: {
     },
     from: vi.fn((table: string) => {
       if (table === "transactions") {
-        const state: { eqUser?: string; eqInst?: string } = {};
+        // RLS is mocked at the row-set level: we just gate on instrument_id
+        // being one the caller "holds". user_id is no longer used for perms.
+        const state: { eqInst?: string } = {};
         const builder = {
           select: vi.fn(() => builder),
           eq: vi.fn((col: string, val: string) => {
-            if (col === "user_id") state.eqUser = val;
             if (col === "instrument_id") state.eqInst = val;
             return builder;
           }),
           limit: vi.fn(() => builder),
           maybeSingle: vi.fn(() => {
-            const matches =
-              state.eqUser === user?.id && state.eqInst && owned.has(state.eqInst);
+            const matches = !!user && !!state.eqInst && owned.has(state.eqInst);
             return Promise.resolve({ data: matches ? { id: "t1" } : null, error: null });
           }),
         };

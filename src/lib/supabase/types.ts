@@ -34,6 +34,38 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_memberships: {
+        Row: {
+          account_id: string
+          created_at: string
+          role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          role: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          role?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_memberships_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accounts: {
         Row: {
           created_at: string
@@ -43,7 +75,7 @@ export type Database = {
           opened_at: string | null
           type: string
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -53,7 +85,7 @@ export type Database = {
           opened_at?: string | null
           type: string
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -63,7 +95,7 @@ export type Database = {
           opened_at?: string | null
           type?: string
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -178,6 +210,47 @@ export type Database = {
         }
         Relationships: []
       }
+      pending_memberships: {
+        Row: {
+          account_id: string
+          consumed_at: string | null
+          email: string
+          expires_at: string
+          id: string
+          invited_at: string
+          invited_by: string
+          role: string
+        }
+        Insert: {
+          account_id: string
+          consumed_at?: string | null
+          email: string
+          expires_at?: string
+          id?: string
+          invited_at?: string
+          invited_by: string
+          role: string
+        }
+        Update: {
+          account_id?: string
+          consumed_at?: string | null
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_at?: string
+          invited_by?: string
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_memberships_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       prices: {
         Row: {
           close: number
@@ -234,7 +307,7 @@ export type Database = {
           trade_date: string
           trade_time: string | null
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           account_id: string
@@ -259,7 +332,7 @@ export type Database = {
           trade_date: string
           trade_time?: string | null
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           account_id?: string
@@ -284,7 +357,7 @@ export type Database = {
           trade_date?: string
           trade_time?: string | null
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -303,12 +376,54 @@ export type Database = {
           },
         ]
       }
+      user_preferences: {
+        Row: {
+          payload: Json
+          scope: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          payload?: Json
+          scope: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          payload?: Json
+          scope?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      account_role: {
+        Args: { target_account: string; target_user: string }
+        Returns: string
+      }
+      can_write_account: {
+        Args: { target_account: string; target_user: string }
+        Returns: boolean
+      }
+      consume_pending_memberships: {
+        Args: { invitee: string; invitee_email: string }
+        Returns: {
+          account_id: string
+        }[]
+      }
+      is_account_member: {
+        Args: { target_account: string; target_user: string }
+        Returns: boolean
+      }
+      is_account_owner: {
+        Args: { target_account: string; target_user: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

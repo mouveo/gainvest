@@ -21,34 +21,34 @@ const USER_ID = "9f2bfbb4-2d94-4def-958a-ab0604b63a25";
 const OWNED_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_ID = "22222222-2222-2222-2222-222222222222";
 
-type Owned = { id: string; transactionCount: number };
+type Visible = { id: string; transactionCount: number; canDelete?: boolean };
 
 type MockOptions = {
   user?: { id: string } | null;
-  ownedAccounts?: Owned[];
+  // Accounts the caller can see (RLS-visible). `canDelete` controls whether
+  // the RLS-gated DELETE actually removes the row (proxy for "owner role").
+  visibleAccounts?: Visible[];
 };
 
 function makeSupabase(opts: MockOptions = {}) {
   const user = opts.user === undefined ? { id: USER_ID } : opts.user;
-  const owned = new Map<string, Owned>(
-    (opts.ownedAccounts ?? [{ id: OWNED_ID, transactionCount: 0 }]).map((a) => [a.id, a]),
+  const visible = new Map<string, Visible>(
+    (opts.visibleAccounts ?? [{ id: OWNED_ID, transactionCount: 0, canDelete: true }]).map(
+      (a) => [a.id, a],
+    ),
   );
 
   const inserts: Record<string, unknown>[] = [];
   const updates: { id: string | undefined; payload: Record<string, unknown> }[] = [];
-  const deletes: { id: string | undefined; userId: string | undefined }[] = [];
+  const deletes: { id: string | undefined }[] = [];
 
   const client = {
     auth: {
       getUser: vi.fn(async () => ({ data: { user } })),
     },
     from: vi.fn((table: string) => {
-      if (table === "accounts") {
-        return accountsBuilder();
-      }
-      if (table === "transactions") {
-        return transactionsBuilder();
-      }
+      if (table === "accounts") return accountsBuilder();
+      if (table === "transactions") return transactionsBuilder();
       return {};
     }),
   };
@@ -60,71 +60,65 @@ function makeSupabase(opts: MockOptions = {}) {
         return { error: null };
       }),
       update: vi.fn((payload: Record<string, unknown>) => {
-        const filters: { id?: string; userId?: string } = {};
+        const filters: { id?: string } = {};
         const builder = {
           eq: vi.fn((col: string, val: string) => {
             if (col === "id") filters.id = val;
-            if (col === "user_id") filters.userId = val;
             return builder;
           }),
           select: vi.fn(() => builder),
           maybeSingle: vi.fn(async () => {
             updates.push({ id: filters.id, payload });
-            const ok = filters.id && owned.has(filters.id) && filters.userId === USER_ID;
-            return ok ? { data: { id: filters.id }, error: null } : { data: null, error: null };
+            const ok = filters.id != null && visible.has(filters.id);
+            return ok
+              ? { data: { id: filters.id }, error: null }
+              : { data: null, error: null };
           }),
         };
         return builder;
       }),
       delete: vi.fn(() => {
-        const filters: { id?: string; userId?: string } = {};
+        const filters: { id?: string } = {};
         const builder = {
-          eq: vi.fn(async (col: string, val: string) => {
-            if (col === "id") filters.id = val;
-            if (col === "user_id") filters.userId = val;
-            deletes.push({ id: filters.id, userId: filters.userId });
-            return { error: null };
-          }),
-        };
-        // Both eq() chain twice — return self until awaited on the second one.
-        let calls = 0;
-        const chain = {
           eq: vi.fn((col: string, val: string) => {
             if (col === "id") filters.id = val;
-            if (col === "user_id") filters.userId = val;
-            calls += 1;
-            if (calls >= 2) {
-              deletes.push({ id: filters.id, userId: filters.userId });
-              return Promise.resolve({ error: null });
-            }
-            return chain;
+            return builder;
+          }),
+          select: vi.fn(async () => {
+            deletes.push({ id: filters.id });
+            const row = filters.id ? visible.get(filters.id) : undefined;
+            // RLS silently filters when the caller is not an owner.
+            const data = row && row.canDelete !== false ? [{ id: row.id }] : [];
+            return { data, error: null };
           }),
         };
-        return chain as unknown as typeof builder;
+        return builder;
       }),
-      select: vi.fn((cols: string, options?: { count?: string; head?: boolean }) => {
+      select: vi.fn((_cols: string, options?: { count?: string; head?: boolean }) => {
         if (options?.count === "exact" && options.head) {
-          const filters: { userId?: string } = {};
-          const builder = {
-            eq: vi.fn(async (col: string, val: string) => {
-              if (col === "user_id") filters.userId = val;
-              const count = filters.userId === USER_ID ? owned.size : 0;
-              return { count, error: null };
-            }),
+          return {
+            // `.select("id", { count: "exact", head: true })` resolves directly
+            // — no further chaining now that user_id is gone.
+            then: (
+              resolve: (value: { count: number; error: null }) => void,
+            ) => {
+              resolve({ count: visible.size, error: null });
+              return Promise.resolve({ count: visible.size, error: null });
+            },
           };
-          return builder;
         }
-        // Ownership lookup: select("id").eq("id", x).eq("user_id", x).maybeSingle()
-        const filters: { id?: string; userId?: string } = {};
+        // Surgical accessibility lookup: select("id").eq("id", x).maybeSingle()
+        const filters: { id?: string } = {};
         const builder = {
           eq: vi.fn((col: string, val: string) => {
             if (col === "id") filters.id = val;
-            if (col === "user_id") filters.userId = val;
             return builder;
           }),
           maybeSingle: vi.fn(async () => {
-            const ok = filters.id && owned.has(filters.id) && filters.userId === USER_ID;
-            return ok ? { data: { id: filters.id }, error: null } : { data: null, error: null };
+            const ok = filters.id != null && visible.has(filters.id);
+            return ok
+              ? { data: { id: filters.id }, error: null }
+              : { data: null, error: null };
           }),
         };
         return builder;
@@ -141,7 +135,7 @@ function makeSupabase(opts: MockOptions = {}) {
             eq: vi.fn(async (col: string, val: string) => {
               if (col === "account_id") filters.accountId = val;
               const count = filters.accountId
-                ? (owned.get(filters.accountId)?.transactionCount ?? 0)
+                ? (visible.get(filters.accountId)?.transactionCount ?? 0)
                 : 0;
               return { count, error: null };
             }),
@@ -190,7 +184,7 @@ describe("createAccount", () => {
     expect(result).toEqual({ ok: false, error: expect.stringContaining("Devise") });
   });
 
-  it("inserts using the authenticated user_id", async () => {
+  it("inserts using the authenticated user_id as audit", async () => {
     const { client, inserts } = makeSupabase();
     createClientMock.mockResolvedValue(
       client as unknown as Awaited<ReturnType<typeof createClient>>,
@@ -220,12 +214,24 @@ describe("renameAccount", () => {
     const result = await renameAccount(OWNED_ID, "   ");
     expect(result).toEqual({ ok: false, error: expect.stringContaining("nom") });
   });
+
+  it("returns a clear error when RLS filters out the update", async () => {
+    const { client } = makeSupabase({ visibleAccounts: [] });
+    createClientMock.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof createClient>>,
+    );
+    const result = await renameAccount(OWNED_ID, "Perso");
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringContaining("modification non autorisée"),
+    });
+  });
 });
 
 describe("deleteAccount", () => {
-  it("refuses the last remaining account", async () => {
+  it("refuses the last remaining accessible account", async () => {
     const { client } = makeSupabase({
-      ownedAccounts: [{ id: OWNED_ID, transactionCount: 0 }],
+      visibleAccounts: [{ id: OWNED_ID, transactionCount: 0, canDelete: true }],
     });
     createClientMock.mockResolvedValue(
       client as unknown as Awaited<ReturnType<typeof createClient>>,
@@ -236,9 +242,9 @@ describe("deleteAccount", () => {
 
   it("refuses an account with transactions", async () => {
     const { client } = makeSupabase({
-      ownedAccounts: [
-        { id: OWNED_ID, transactionCount: 3 },
-        { id: OTHER_ID, transactionCount: 0 },
+      visibleAccounts: [
+        { id: OWNED_ID, transactionCount: 3, canDelete: true },
+        { id: OTHER_ID, transactionCount: 0, canDelete: true },
       ],
     });
     createClientMock.mockResolvedValue(
@@ -251,9 +257,9 @@ describe("deleteAccount", () => {
     });
   });
 
-  it("refuses an account not owned by the caller", async () => {
+  it("refuses an account the caller cannot access", async () => {
     const { client } = makeSupabase({
-      ownedAccounts: [{ id: OTHER_ID, transactionCount: 0 }],
+      visibleAccounts: [{ id: OTHER_ID, transactionCount: 0, canDelete: true }],
     });
     createClientMock.mockResolvedValue(
       client as unknown as Awaited<ReturnType<typeof createClient>>,
@@ -261,7 +267,26 @@ describe("deleteAccount", () => {
     const result = await deleteAccount("33333333-3333-3333-3333-333333333333");
     expect(result).toEqual({
       ok: false,
-      error: expect.stringContaining("introuvable"),
+      error: expect.stringContaining("non accessible"),
+    });
+  });
+
+  it("rejects with an owner-required error when RLS filters the delete (viewer / editor)", async () => {
+    const { client } = makeSupabase({
+      visibleAccounts: [
+        // Account is visible (caller is e.g. viewer) but the DELETE is silently
+        // filtered by RLS because the caller is not the owner.
+        { id: OWNED_ID, transactionCount: 0, canDelete: false },
+        { id: OTHER_ID, transactionCount: 0, canDelete: true },
+      ],
+    });
+    createClientMock.mockResolvedValue(
+      client as unknown as Awaited<ReturnType<typeof createClient>>,
+    );
+    const result = await deleteAccount(OWNED_ID);
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringContaining("propriétaire"),
     });
   });
 });

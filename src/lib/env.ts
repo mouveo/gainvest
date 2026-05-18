@@ -23,3 +23,22 @@ export function hasSupabaseEnv(): boolean {
     process.env["NEXT_PUBLIC_SUPABASE_URL"] && process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"],
   );
 }
+
+/**
+ * Server-only env. Kept separate from `getEnv()` so we never accidentally
+ * import the service-role key into a client bundle — the public env helper
+ * stays usable in Server Components / middleware without pulling secrets
+ * into its return shape.
+ */
+export function getServerEnv() {
+  return {
+    NEXT_PUBLIC_SUPABASE_URL: required("NEXT_PUBLIC_SUPABASE_URL"),
+    SUPABASE_SERVICE_ROLE_KEY: required("SUPABASE_SERVICE_ROLE_KEY"),
+  };
+}
+
+export function hasSupabaseAdminEnv(): boolean {
+  return Boolean(
+    process.env["NEXT_PUBLIC_SUPABASE_URL"] && process.env["SUPABASE_SERVICE_ROLE_KEY"],
+  );
+}

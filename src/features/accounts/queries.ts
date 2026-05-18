@@ -14,10 +14,12 @@ export function isUuid(value: string): boolean {
 }
 
 /**
- * Returns the oldest account id for the current user (deterministic fallback
- * when no active account cookie is set). Inserts a default Portefeuille if
- * the user has no accounts yet — should not happen in practice since the
- * on_auth_user_created trigger seeds one, but kept as a safety net.
+ * Returns the oldest account id accessible to the current user — i.e. any
+ * account where the user has a membership (owner / editor / viewer). RLS
+ * does the filtering; we just read what's visible. The safety-net insert at
+ * the end keeps the original single-user fallback for the rare case where a
+ * user has no accessible account at all (the on_auth_user_created trigger
+ * normally guarantees one).
  */
 export async function getOldestAccountId(): Promise<string> {
   const supabase = await createClient();
@@ -84,7 +86,12 @@ export async function listAccountsWithTransactionCounts(): Promise<
   }));
 }
 
-export async function userOwnsAccount(accountId: string): Promise<boolean> {
+/**
+ * True when the caller has any membership (owner / editor / viewer) on the
+ * given account. RLS filters the SELECT to accessible rows, so a non-null
+ * lookup is sufficient.
+ */
+export async function userCanAccessAccount(accountId: string): Promise<boolean> {
   if (!accountId || !isUuid(accountId)) return false;
   const supabase = await createClient();
   const { data, error } = await supabase

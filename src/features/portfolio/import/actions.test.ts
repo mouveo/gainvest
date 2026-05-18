@@ -150,23 +150,25 @@ function makeSupabase(opts: {
         };
       }
       if (table === "transactions") {
+        // Two queries reach this builder:
+        //  - dedup window: .select(cols).eq("account_id", x).gte(...).lte(...)
+        //  - priorTx read: .select(cols).eq("account_id", x).eq("support", s)
+        //                                .in("kind", [...]).in("instrument_id", [...])
+        // Use a self-referential builder so each .eq / .in / .gte / .lte hop
+        // returns the same shape, and any terminal method resolves to [].
+        const builder: Record<string, unknown> = {};
+        const terminate = async () => ({ data: [] as unknown[], error: null });
+        builder.eq = () => builder;
+        builder.in = () => builder;
+        builder.gte = () => builder;
+        builder.lte = terminate;
+        builder.then = (resolve: (value: { data: unknown[]; error: null }) => void) => {
+          const value = { data: [] as unknown[], error: null };
+          resolve(value);
+          return Promise.resolve(value);
+        };
         return {
-          select: (_cols: string) => ({
-            // dedup window read: .eq("account_id", x).gte(...).lte(...)
-            eq: () => ({
-              gte: () => ({
-                lte: async () => ({ data: [], error: null }),
-              }),
-              // priorTx read: .eq("user_id").eq("account_id").eq("support").in("kind").in("instrument_id")
-              eq: () => ({
-                eq: () => ({
-                  in: () => ({
-                    in: async () => ({ data: [], error: null }),
-                  }),
-                }),
-              }),
-            }),
-          }),
+          select: (_cols: string) => builder,
           insert: async (chunk: InsertedTx[]) => {
             for (const row of chunk) insertedTx.push(row);
             return { error: null };

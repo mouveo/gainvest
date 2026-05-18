@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
     if (!data) {
       return NextResponse.json(
-        { ok: false, error: "Compte introuvable ou non détenu." },
+        { ok: false, error: "Compte introuvable ou non accessible." },
         { status: 404 },
       );
     }
