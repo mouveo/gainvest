@@ -1,73 +1,74 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
+
+import { useUserPreference } from "@/features/preferences/use-preference";
+import type { PreferenceScope } from "@/features/preferences/actions";
 
 import { computeDefaults, type ColumnDef, type VisibleMap } from "./types";
+
+// Legacy storageKey → DB scope. Keep the key parameter so callers stay on the
+// same call signature; the scope is derived from the legacy storage key.
+const SCOPE_BY_STORAGE_KEY: Record<string, PreferenceScope> = {
+  "gainvest:positions:visible-columns": "positions",
+  "gainvest:realizations:visible-columns": "realizations",
+  "gainvest:movements:visible-columns": "movements",
+};
+
+const PAYLOAD_KEY = "columns";
+
+export function enforceAlways<K extends string>(
+  visible: VisibleMap<K>,
+  columns: readonly ColumnDef<K>[],
+): VisibleMap<K> {
+  const next = { ...visible };
+  for (const c of columns) {
+    if (c.always) next[c.key] = true;
+  }
+  return next;
+}
 
 export function useVisibleColumns<K extends string>(
   storageKey: string,
   columns: readonly ColumnDef<K>[],
 ) {
   const defaults = useMemo(() => computeDefaults(columns), [columns]);
-  const [visible, setVisible] = useState<VisibleMap<K>>(() => defaults);
+  const scope = SCOPE_BY_STORAGE_KEY[storageKey] ?? "global";
 
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== "object") return;
-      const persisted = parsed as Record<string, unknown>;
-      const merged = { ...defaults };
-      for (const c of columns) {
-        if (c.always) {
-          merged[c.key] = true;
-          continue;
-        }
-        const v = persisted[c.key];
-        if (typeof v === "boolean") {
-          merged[c.key] = v;
-        }
-      }
-      setVisible(merged);
-    } catch {
-      // ignore corrupted JSON, quota errors, private mode, etc.
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
+  const [stored, setStored] = useUserPreference<VisibleMap<K>>(
+    scope,
+    PAYLOAD_KEY,
+    defaults,
+    { localStorageKey: storageKey },
+  );
+
+  // Always-true columns must remain visible regardless of what the user (or
+  // the persisted payload) says. Apply the rule on read and on write so the
+  // stored payload never disagrees with the live state.
+  const visible = useMemo(
+    () => enforceAlways(stored, columns),
+    [stored, columns],
+  );
 
   const persist = useCallback(
     (next: VisibleMap<K>) => {
-      try {
-        window.localStorage.setItem(storageKey, JSON.stringify(next));
-      } catch {
-        // ignore quota / private mode errors
-      }
+      setStored(enforceAlways(next, columns));
     },
-    [storageKey],
+    [setStored, columns],
   );
 
   const toggle = useCallback(
     (key: K) => {
       const col = columns.find((c) => c.key === key);
       if (col?.always) return;
-      setVisible((prev) => {
-        const next = { ...prev, [key]: !prev[key] };
-        persist(next);
-        return next;
-      });
+      persist({ ...visible, [key]: !visible[key] });
     },
-    [columns, persist],
+    [columns, visible, persist],
   );
 
   const reset = useCallback(() => {
-    try {
-      window.localStorage.removeItem(storageKey);
-    } catch {
-      // ignore
-    }
-    setVisible(computeDefaults(columns));
-  }, [columns, storageKey]);
+    persist(computeDefaults(columns));
+  }, [columns, persist]);
 
   const showAll = useCallback(() => {
     const next = {} as VisibleMap<K>;
@@ -75,7 +76,6 @@ export function useVisibleColumns<K extends string>(
       next[c.key] = true;
     }
     persist(next);
-    setVisible(next);
   }, [columns, persist]);
 
   const shown = useCallback((key: K) => visible[key] === true, [visible]);
