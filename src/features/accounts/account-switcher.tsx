@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings } from "lucide-react";
+import { Settings, Share2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -90,6 +90,14 @@ export function AccountSwitcher({ accounts, currentId }: Props) {
         className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
       >
         <Settings className="size-4" />
+      </Link>
+      <Link
+        href="/settings/sharing"
+        aria-label="Partager le compte"
+        title="Partager le compte"
+        className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+      >
+        <Share2 className="size-4" />
       </Link>
       {error ? (
         <span role="alert" className="text-danger text-xs">
